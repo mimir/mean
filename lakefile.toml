@@ -1,0 +1,6 @@
+name = "lambda-graph"
+version = "0.1.0"
+defaultTargets = ["LambdaGraph"]
+
+[[lean_lib]]
+name = "LambdaGraph"
