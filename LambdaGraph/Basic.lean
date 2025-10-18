@@ -15,13 +15,23 @@ inductive Expr (L : Type) where
   | bool (b : Bool)
   | cond (c et ef : Expr L)
 
+/-- The type of an `Expr`. -/
+inductive Ty where
+  | bot
+  | bool
+  | cn (t : Ty)
+
 /--
 A collection of labelled lambda terms.
 
-A program is represented as a function mapping each label to the body of the
-lambda associated with that label.
+A program is represented with functions mapping each label to the body of the
+lambda associated with that label and to the type of its variable.
 -/
-def Program (L : Type) : Type := L → Expr L
+structure Program (L : Type) : Type where
+  /-- Maps each label to the corresponding function body. -/
+  fn : L → Expr L
+  /-- Maps each label to the type of the corresponding function's argument. -/
+  ty : L → Ty
 
 /-- A partial function from labels to expressions. -/
 def Env (L : Type) : Type := L → Option (Expr L)
@@ -63,7 +73,7 @@ stored environment.
 inductive Step {L : Type} [DecidableEq L] (p : Program L) :
     Expr L → Expr L → Prop where
   | app (l : L) (σ : Env L) (e : Expr L) :
-    Expr.Value e → Step p (.app (.clos l σ) e) ((p l).subst ([l ↦ e] σ))
+    Expr.Value e → Step p (.app (.clos l σ) e) ((p.fn l).subst ([l ↦ e] σ))
   | appL (f f' e : Expr L) : Step p f f' → Step p (f.app e) (f'.app e)
   | appR (f e e' : Expr L) : f.Value → Step p e e' → Step p (f.app e) (f.app e')
   | condT (et ef : Expr L) : Step p (.cond (.bool true) et ef) et
@@ -76,3 +86,31 @@ inductive Steps {L : Type} [DecidableEq L] (p : Program L) :
     Expr L → Expr L → Prop where
   | refl (e : Expr L) : Steps p e e
   | step (e e' e'' : Expr L) : Step p e e' → Steps p e' e'' → Steps p e e''
+
+/--
+The typing relation.
+
+The relation is parameterised by the program and a context represented as a list
+of the labels of all variables in scope (the corresponding types are already
+contained in the program). A variable must be in the context to be well-typed. A
+function reference is well-typed if its body is well-typed in the context
+extended with its bound variable, or if its label is already in the context
+(since this requires checking the body anyway). A closure is only well-typed if
+its environment contains all the variables it depends on.
+-/
+inductive Types {L : Type} (p : Program L) : List L → Expr L → Ty → Prop where
+  | var (Γ : List L) (l : L) : l ∈ Γ → Types p Γ (.var l) (p.ty l)
+  | fnRec (Γ : List L) (l : L) : l ∈ Γ → Types p Γ (.fn l) (p.ty l).cn
+  | fnNew (Γ : List L) (l : L) :
+    l ∉ Γ → Types p (l :: Γ) (p.fn l) .bot → Types p Γ (.fn l) (p.ty l).cn
+  | app (Γ : List L) (f e : Expr L) (t : Ty) :
+    Types p Γ f t.cn → Types p Γ e t → Types p Γ (f.app e) .bot
+  -- FIXME: A closure should only be well-typed if its environment contains all
+  -- the variables it depends on.
+  | clos (Γ : List L) (l : L) (σ : Env L) : Types p Γ (.clos l σ) (p.ty l).cn
+  | bool (Γ : List L) (b : Bool) : Types p Γ (.bool b) .bool
+  | cond (Γ : List L) (c et ef : Expr L) (t : Ty) :
+    Types p Γ c .bool → Types p Γ et t → Types p Γ ef t
+      → Types p Γ (c.cond et ef) t
+
+notation:60 p:61 " / " Γ:61 " ⊢ " e:61 " : " t:61 => Types p Γ e t
