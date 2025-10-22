@@ -11,7 +11,7 @@ inductive Expr (L : Type) where
   | var (l : L)
   | fn (l : L)
   | app (f e : Expr L)
-  | clos (l : L) (σ : L → Option (Expr L))
+  | clos (l : L) (σ : L → Expr L)
   | bool (b : Bool)
   | cond (c et ef : Expr L)
 
@@ -34,11 +34,11 @@ structure Program (L : Type) : Type where
   ty : L → Ty
 
 /-- A partial function from labels to expressions. -/
-def Env (L : Type) : Type := L → Option (Expr L)
+def Env (L : Type) : Type := L → Expr L
 
 /-- Updates an environment with a new value for a given label. -/
 def Env.update {L : Type} [DecidableEq L] (σ : Env L) (l : L) (v : Expr L) :=
-  fun l' => if l = l' then some v else σ l'
+  fun l' => if l = l' then v else σ l'
 
 notation "[" l " ↦ " e "]" σ:max => Env.update σ l e
 
@@ -51,12 +51,29 @@ with the environment.
 -/
 def Expr.subst {L : Type} [DecidableEq L] (e : Expr L) (σ : Env L) : Expr L :=
   match e with
-  | var l => (σ l).getD (var l)
+  | var l => σ l
   | fn l => clos l σ
   | app f e => (f.subst σ).app (e.subst σ)
   | clos l σ' => clos l σ'
   | bool b => bool b
   | cond c et ef => (c.subst σ).cond (et.subst σ) (ef.subst σ)
+
+/--
+The free-variable relation.
+
+A variable occurs free in an expression if the expression itself contains the
+variable, or if it contains a reference to a function in which the variable
+occurs free. Closures are not considered to contain free variables, but those
+with an incomplete environment are considered to be ill-typed.
+-/
+inductive Free {L : Type} (p : Program L) (l : L) : Expr L → Prop where
+  | var : Free p l (.var l)
+  | fn (l' : L) : l ≠ l' → Free p l (p.fn l') → Free p l (.fn l')
+  | appL (f e : Expr L) : Free p l f → Free p l (.app f e)
+  | appR (f e : Expr L) : Free p l e → Free p l (.app f e)
+  | condC (c et ef : Expr L) : Free p l c → Free p l (.cond c et ef)
+  | condT (c et ef : Expr L) : Free p l et → Free p l (.cond c et ef)
+  | condF (c et ef : Expr L) : Free p l ef → Free p l (.cond c et ef)
 
 /-- A fully reduced expression. -/
 inductive Expr.Value {L : Type} : Expr L → Prop where
@@ -96,7 +113,7 @@ contained in the program). A variable must be in the context to be well-typed. A
 function reference is well-typed if its body is well-typed in the context
 extended with its bound variable, or if its label is already in the context
 (since this requires checking the body anyway). A closure is only well-typed if
-its environment contains all the variables it depends on.
+its environment contains correctly typed values for all of its free variables.
 -/
 inductive Types {L : Type} (p : Program L) : List L → Expr L → Ty → Prop where
   | var (Γ : List L) (l : L) : l ∈ Γ → Types p Γ (.var l) (p.ty l)
@@ -105,9 +122,9 @@ inductive Types {L : Type} (p : Program L) : List L → Expr L → Ty → Prop w
     l ∉ Γ → Types p (l :: Γ) (p.fn l) .bot → Types p Γ (.fn l) (p.ty l).cn
   | app (Γ : List L) (f e : Expr L) (t : Ty) :
     Types p Γ f t.cn → Types p Γ e t → Types p Γ (f.app e) .bot
-  -- FIXME: A closure should only be well-typed if its environment contains all
-  -- the variables it depends on.
-  | clos (Γ : List L) (l : L) (σ : Env L) : Types p Γ (.clos l σ) (p.ty l).cn
+  | clos (Γ : List L) (l : L) (σ : Env L) :
+    (∀ l' ≠ l, Free p l' (p.fn l) → Types p [] (σ l') (p.ty l'))
+      → Types p Γ (.clos l σ) (p.ty l).cn
   | bool (Γ : List L) (b : Bool) : Types p Γ (.bool b) .bool
   | cond (Γ : List L) (c et ef : Expr L) (t : Ty) :
     Types p Γ c .bool → Types p Γ et t → Types p Γ ef t
