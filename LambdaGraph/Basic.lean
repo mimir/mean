@@ -36,6 +36,12 @@ structure Program (L : Type) : Type where
 /-- A partial function from labels to expressions. -/
 def Env (L : Type) : Type := L → Expr L
 
+/-- The empty environment. -/
+def Env.empty {L : Type} : Env L := .var
+
+instance (L : Type) : EmptyCollection (Env L) where
+  emptyCollection := .empty
+
 /-- Updates an environment with a new value for a given label. -/
 def Env.update {L : Type} [DecidableEq L] (σ : Env L) (l : L) (v : Expr L) :=
   fun l' => if l = l' then v else σ l'
@@ -89,6 +95,7 @@ stored environment.
 -/
 inductive Step {L : Type} [DecidableEq L] (p : Program L) :
     Expr L → Expr L → Prop where
+  | fn (l : L) : Step p (.fn l) (.clos l (∅ : Env L))
   | app (l : L) (σ : Env L) (e : Expr L) :
     Expr.Value e → Step p (.app (.clos l σ) e) ((p.fn l).subst ([l ↦ e] σ))
   | appL (f f' e : Expr L) : Step p f f' → Step p (f.app e) (f'.app e)
@@ -98,11 +105,15 @@ inductive Step {L : Type} [DecidableEq L] (p : Program L) :
   | condC (c c' et ef : Expr L) :
     Step p c c' → Step p (c.cond et ef) (c'.cond et ef)
 
+notation:40 p:41 " / " e:41 " ⇒ " e':41 => Step p e e'
+
 /-- The reflexive-transitive closure of the reduction relation. -/
 inductive Steps {L : Type} [DecidableEq L] (p : Program L) :
     Expr L → Expr L → Prop where
   | refl (e : Expr L) : Steps p e e
   | step (e e' e'' : Expr L) : Step p e e' → Steps p e' e'' → Steps p e e''
+
+notation:40 p:41 " / " e:41 " ⇒* " e':41 => Steps p e e'
 
 /--
 The typing relation.
