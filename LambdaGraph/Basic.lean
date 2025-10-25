@@ -46,7 +46,7 @@ instance (L : Type) : EmptyCollection (Env L) where
 def Env.update {L : Type} [DecidableEq L] (σ : Env L) (l : L) (v : Expr L) :=
   fun l' => if l = l' then v else σ l'
 
-notation "[" l " ↦ " e "]" σ:max => Env.update σ l e
+notation "[" l " ↦ " e "] " σ:max => Env.update σ l e
 
 /--
 Applies substitutions from an environment to an expression.
@@ -55,7 +55,7 @@ Each labelled variable in the expression is replaced with its value in the
 environment (if present) and each lambda reference is instantiated to a closure
 with the environment.
 -/
-def Expr.subst {L : Type} [DecidableEq L] (e : Expr L) (σ : Env L) : Expr L :=
+def Expr.subst {L : Type} (e : Expr L) (σ : Env L) : Expr L :=
   match e with
   | var l => σ l
   | fn l => clos l σ
@@ -130,11 +130,13 @@ inductive Types {L : Type} (p : Program L) : List L → Expr L → Ty → Prop w
   | var (Γ : List L) (l : L) : l ∈ Γ → Types p Γ (.var l) (p.ty l)
   | fnRec (Γ : List L) (l : L) : l ∈ Γ → Types p Γ (.fn l) (p.ty l).cn
   | fnNew (Γ : List L) (l : L) :
-    l ∉ Γ → Types p (l :: Γ) (p.fn l) .bot → Types p Γ (.fn l) (p.ty l).cn
+    Types p (l :: Γ) (p.fn l) .bot → Types p Γ (.fn l) (p.ty l).cn
   | app (Γ : List L) (f e : Expr L) (t : Ty) :
     Types p Γ f t.cn → Types p Γ e t → Types p Γ (f.app e) .bot
-  | clos (Γ : List L) (l : L) (σ : Env L) :
-    (∀ l' ≠ l, Free p l' (p.fn l) → Types p [] (σ l') (p.ty l'))
+  | clos (Γ Γ' : List L) (l : L) (σ : Env L) :
+    Types p (l :: Γ') (p.fn l) .bot
+      → (∀ l' ∈ Γ', Types p Γ' (p.fn l') .bot)
+      → (∀ l' ∈ Γ', Types p [] (σ l') (p.ty l'))
       → Types p Γ (.clos l σ) (p.ty l).cn
   | bool (Γ : List L) (b : Bool) : Types p Γ (.bool b) .bool
   | cond (Γ : List L) (c et ef : Expr L) (t : Ty) :
