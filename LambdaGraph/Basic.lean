@@ -1,3 +1,5 @@
+import LambdaGraph.Set
+
 /--
 An expression with labels of type `L`.
 
@@ -118,7 +120,7 @@ notation:40 p:41 " / " e:41 " ⇒* " e':41 => Steps p e e'
 /--
 The typing relation.
 
-The relation is parameterised by the program and a context represented as a list
+The relation is parameterised by the program and a context represented as a set
 of the labels of all variables in scope (the corresponding types are already
 contained in the program). A variable must be in the context to be well-typed. A
 function reference is well-typed if its body is well-typed in the context
@@ -126,20 +128,20 @@ extended with its bound variable, or if its label is already in the context
 (since this requires checking the body anyway). A closure is only well-typed if
 its environment contains correctly typed values for all of its free variables.
 -/
-inductive Types {L : Type} (p : Program L) : List L → Expr L → Ty → Prop where
-  | var (Γ : List L) (l : L) : l ∈ Γ → Types p Γ (.var l) (p.ty l)
-  | fnRec (Γ : List L) (l : L) : l ∈ Γ → Types p Γ (.fn l) (p.ty l).cn
-  | fnNew (Γ : List L) (l : L) :
-    Types p (l :: Γ) (p.fn l) .bot → Types p Γ (.fn l) (p.ty l).cn
-  | app (Γ : List L) (f e : Expr L) (t : Ty) :
+inductive Types {L : Type} (p : Program L) : Set L → Expr L → Ty → Prop where
+  | var (Γ : Set L) (l : L) : l ∈ Γ → Types p Γ (.var l) (p.ty l)
+  | fnRec (Γ : Set L) (l : L) : l ∈ Γ → Types p Γ (.fn l) (p.ty l).cn
+  | fnNew (Γ : Set L) (l : L) :
+    Types p (insert l Γ) (p.fn l) .bot → Types p Γ (.fn l) (p.ty l).cn
+  | app (Γ : Set L) (f e : Expr L) (t : Ty) :
     Types p Γ f t.cn → Types p Γ e t → Types p Γ (f.app e) .bot
-  | clos (Γ Γ' : List L) (l : L) (σ : Env L) :
-    Types p (l :: Γ') (p.fn l) .bot
+  | clos (Γ Γ' : Set L) (l : L) (σ : Env L) :
+    Types p (insert l Γ') (p.fn l) .bot
       → (∀ l' ∈ Γ', Types p Γ' (p.fn l') .bot)
-      → (∀ l' ∈ Γ', Types p [] (σ l') (p.ty l'))
+      → (∀ l' ∈ Γ', Types p ∅ (σ l') (p.ty l'))
       → Types p Γ (.clos l σ) (p.ty l).cn
-  | bool (Γ : List L) (b : Bool) : Types p Γ (.bool b) .bool
-  | cond (Γ : List L) (c et ef : Expr L) (t : Ty) :
+  | bool (Γ : Set L) (b : Bool) : Types p Γ (.bool b) .bool
+  | cond (Γ : Set L) (c et ef : Expr L) (t : Ty) :
     Types p Γ c .bool → Types p Γ et t → Types p Γ ef t
       → Types p Γ (c.cond et ef) t
 
