@@ -44,8 +44,12 @@ def Env.empty {L : Type} : Env L := .var
 instance (L : Type) : EmptyCollection (Env L) where
   emptyCollection := .empty
 
+/-- The set of variables with mappings in an environment. -/
+def Env.vars {L : Type} (σ : Env L) : Set L := {l | σ l ≠ .var l}
+
 /-- Updates an environment with a new value for a given label. -/
-def Env.update {L : Type} [DecidableEq L] (σ : Env L) (l : L) (v : Expr L) :=
+def Env.update {L : Type} [DecidableEq L] (σ : Env L) (l : L) (v : Expr L) :
+    Env L :=
   fun l' => if l = l' then v else σ l'
 
 notation "[" l " ↦ " e "] " σ:max => Env.update σ l e
@@ -120,29 +124,32 @@ notation:40 p:41 " / " e:41 " ⇒* " e':41 => Steps p e e'
 /--
 The typing relation.
 
-The relation is parameterised by the program and a context represented as a set
-of the labels of all variables in scope (the corresponding types are already
+The relation is parameterised by the program and a context represented by sets
+of the variables and functions in scope (the corresponding types are already
 contained in the program). A variable must be in the context to be well-typed. A
 function reference is well-typed if its body is well-typed in the context
-extended with its bound variable, or if its label is already in the context
+extended with itself and its bound variable, or if it is already in the context
 (since this requires checking the body anyway). A closure is only well-typed if
-its environment contains correctly typed values for all of its free variables.
+the function body is well-typed in a context containing all the environment's
+variables and the values in the environment are correctly typed.
 -/
-inductive Types {L : Type} (p : Program L) : Set L → Expr L → Ty → Prop where
-  | var (Γ : Set L) (l : L) : l ∈ Γ → Types p Γ (.var l) (p.ty l)
-  | fnRec (Γ : Set L) (l : L) : l ∈ Γ → Types p Γ (.fn l) (p.ty l).cn
-  | fnNew (Γ : Set L) (l : L) :
-    Types p (insert l Γ) (p.fn l) .bot → Types p Γ (.fn l) (p.ty l).cn
-  | app (Γ : Set L) (f e : Expr L) (t : Ty) :
-    Types p Γ f t.cn → Types p Γ e t → Types p Γ (f.app e) .bot
-  | clos (Γ Γ' : Set L) (l : L) (σ : Env L) :
-    Types p (insert l Γ') (p.fn l) .bot
-      → (∀ l' ∈ Γ', Types p Γ' (p.fn l') .bot)
-      → (∀ l' ∈ Γ', Types p ∅ (σ l') (p.ty l'))
-      → Types p Γ (.clos l σ) (p.ty l).cn
-  | bool (Γ : Set L) (b : Bool) : Types p Γ (.bool b) .bool
-  | cond (Γ : Set L) (c et ef : Expr L) (t : Ty) :
-    Types p Γ c .bool → Types p Γ et t → Types p Γ ef t
-      → Types p Γ (c.cond et ef) t
+inductive Types {L : Type} (p : Program L) :
+    Set L → Set L → Expr L → Ty → Prop where
+  | var (Γv Γf : Set L) (l : L) : l ∈ Γv → Types p Γv Γf (.var l) (p.ty l)
+  | fnRec (Γv Γf : Set L) (l : L) : l ∈ Γf → Types p Γv Γf (.fn l) (p.ty l).cn
+  | fnNew (Γv Γf : Set L) (l : L) :
+    Types p (insert l Γv) (insert l Γf) (p.fn l) .bot →
+    Types p Γv Γf (.fn l) (p.ty l).cn
+  | app (Γv Γf : Set L) (f e : Expr L) (t : Ty) :
+    Types p Γv Γf f t.cn → Types p Γv Γf e t → Types p Γv Γf (f.app e) .bot
+  | clos (Γv Γf : Set L) (l : L) (σ : Env L) :
+    Types p (insert l σ.vars) {l} (p.fn l) .bot →
+    (∀ l' ∈ σ.vars, Types p ∅ ∅ (σ l') (p.ty l')) →
+    Types p Γv Γf (.clos l σ) (p.ty l).cn
+  | bool (Γv Γf : Set L) (b : Bool) : Types p Γv Γf (.bool b) .bool
+  | cond (Γv Γf : Set L) (c et ef : Expr L) (t : Ty) :
+    Types p Γv Γf c .bool → Types p Γv Γf et t → Types p Γv Γf ef t →
+    Types p Γv Γf (c.cond et ef) t
 
-notation:60 p:61 " / " Γ:61 " ⊢ " e:61 " : " t:61 => Types p Γ e t
+notation:60 p:61 " / " Γv:61 ", " Γf:61 " ⊢ " e:61 " : " t:61 =>
+  Types p Γv Γf e t
