@@ -52,6 +52,17 @@ inductive Free (p : Env) (n : Nat) : Expr → Prop where
   | condT (c et ef : Expr) : Free p n et → Free p n (.cond c et ef)
   | condF (c et ef : Expr) : Free p n ef → Free p n (.cond c et ef)
 
+/--
+A dependency of a function on a variable.
+
+During substitution, all functions that depend on the substitution variable must
+be rewritten.
+-/
+inductive Depends (p : Env) : Nat → Nat → Prop where
+  | free (m n : Nat) (_ : m < p.size) : n ≠ m → Free p n p.fn[m] → Depends p m n
+  | step (m n k : Nat) (_ : m < p.size) :
+    n ≠ m → Free p n p.fn[m] → Depends p n k → Depends p m k
+
 open Classical in -- TODO: Remove this by implementing Decidable.
 /--
 Assigns labels for new versions of the functions with free occurrences of `n`.
@@ -66,7 +77,7 @@ noncomputable def Env.labelMap (p : Env) (n : Nat) :
 where
   aux i k map inv :=
     if h : i < p.size then
-      if n ≠ i ∧ Free p n p.fn[i] then
+      if Depends p i n then
         aux (i + 1) (k + 1) (map.set i k) (inv.push ⟨i, h⟩)
       else
         aux (i + 1) k map inv
