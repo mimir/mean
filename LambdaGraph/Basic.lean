@@ -1,21 +1,16 @@
-import LambdaGraph.Set
-
 /--
-An expression with labels of type `L`.
+An expression.
 
 An expression is part of a program containing labelled lambda terms that may
 refer to other lambdas and their variables by label. The expression language
-does not contain a construct for unnamed lambdas. Closures are needed during
-reduction to bind lambda references to the environment from which they came;
-they are not considered part of the surface syntax.
+does not contain a construct for unnamed lambdas.
 -/
-inductive Expr (L : Type) where
-  | var (l : L)
-  | fn (l : L)
-  | app (f e : Expr L)
-  | clos (l : L) (σ : L → Expr L)
+inductive Expr where
+  | var (n : Nat)
+  | fn (n : Nat)
+  | app (f e : Expr)
   | bool (b : Bool)
-  | cond (c et ef : Expr L)
+  | cond (c et ef : Expr)
 
 /-- The type of an `Expr`. -/
 inductive Ty where
@@ -26,130 +21,154 @@ inductive Ty where
 /--
 A collection of labelled lambda terms.
 
-A program is represented with functions mapping each label to the body of the
-lambda associated with that label and to the type of its variable.
+An environment is represented as an array of function bodies and an array of the
+types of their corresponding variables.
 -/
-structure Program (L : Type) : Type where
+structure Env where
+  size : Nat
   /-- Maps each label to the corresponding function body. -/
-  fn : L → Expr L
+  fn : Vector Expr size
   /-- Maps each label to the type of the corresponding function's argument. -/
-  ty : L → Ty
+  ty : Vector Ty size
 
-/-- A partial function from labels to expressions. -/
-def Env (L : Type) : Type := L → Expr L
-
-/-- The empty environment. -/
-def Env.empty {L : Type} : Env L := .var
-
-instance (L : Type) : EmptyCollection (Env L) where
-  emptyCollection := .empty
-
-/-- The set of variables with mappings in an environment. -/
-def Env.vars {L : Type} (σ : Env L) : Set L := {l | σ l ≠ .var l}
-
-/-- Updates an environment with a new value for a given label. -/
-def Env.update {L : Type} [DecidableEq L] (σ : Env L) (l : L) (v : Expr L) :
-    Env L :=
-  fun l' => if l = l' then v else σ l'
-
-notation "[" l " ↦ " e "] " σ:max => Env.update σ l e
-
-/--
-Applies substitutions from an environment to an expression.
-
-Each labelled variable in the expression is replaced with its value in the
-environment (if present) and each lambda reference is instantiated to a closure
-with the environment.
--/
-def Expr.subst {L : Type} (e : Expr L) (σ : Env L) : Expr L :=
-  match e with
-  | var l => σ l
-  | fn l => clos l σ
-  | app f e => (f.subst σ).app (e.subst σ)
-  | clos l σ' => clos l σ'
-  | bool b => bool b
-  | cond c et ef => (c.subst σ).cond (et.subst σ) (ef.subst σ)
+/-- A program consists of an environment and an expression to be evaluated. -/
+structure Program extends Env where
+  /-- The expression to be evaluated. -/
+  expr : Expr
 
 /--
 The free-variable relation.
 
 A variable occurs free in an expression if the expression itself contains the
 variable, or if it contains a reference to a function in which the variable
-occurs free. Closures are not considered to contain free variables, but those
-with an incomplete environment are considered to be ill-typed.
+occurs free.
 -/
-inductive Free {L : Type} (p : Program L) (l : L) : Expr L → Prop where
-  | var : Free p l (.var l)
-  | fn (l' : L) : l ≠ l' → Free p l (p.fn l') → Free p l (.fn l')
-  | appL (f e : Expr L) : Free p l f → Free p l (.app f e)
-  | appR (f e : Expr L) : Free p l e → Free p l (.app f e)
-  | condC (c et ef : Expr L) : Free p l c → Free p l (.cond c et ef)
-  | condT (c et ef : Expr L) : Free p l et → Free p l (.cond c et ef)
-  | condF (c et ef : Expr L) : Free p l ef → Free p l (.cond c et ef)
+inductive Free (p : Env) (n : Nat) : Expr → Prop where
+  | var : Free p n (.var n)
+  | fn (m : Nat) (_ : m < p.size) : n ≠ m → Free p n p.fn[m] → Free p n (.fn m)
+  | appL (f e : Expr) : Free p n f → Free p n (.app f e)
+  | appR (f e : Expr) : Free p n e → Free p n (.app f e)
+  | condC (c et ef : Expr) : Free p n c → Free p n (.cond c et ef)
+  | condT (c et ef : Expr) : Free p n et → Free p n (.cond c et ef)
+  | condF (c et ef : Expr) : Free p n ef → Free p n (.cond c et ef)
+
+open Classical in -- TODO: Remove this by implementing Decidable.
+/--
+Assigns labels for new versions of the functions with free occurrences of `n`.
+
+Returns an array mapping each function label to the label of the new version of
+that function (or itself if there is none), as well as an array mapping each of
+the added labels back to the label of its original function.
+-/
+noncomputable def Env.labelMap (p : Env) (n : Nat) :
+    Vector Nat p.size × Array (Fin p.size) :=
+  aux 0 p.size (Vector.ofFn Fin.val) #[]
+where
+  aux i k map inv :=
+    if h : i < p.size then
+      if n ≠ i ∧ Free p n p.fn[i] then
+        aux (i + 1) (k + 1) (map.set i k) (inv.push ⟨i, h⟩)
+      else
+        aux (i + 1) k map inv
+    else
+      (map, inv)
+
+/--
+Substitutes a value for a variable in an expression.
+
+The expression may include references to functions that include the variable to
+be substituted as a free variable. For these functions, new versions need to be
+added to the environment, with their free occurrences substituted as well. This
+function does not perform this change to the environment, but receives an array
+mapping function labels to the labels of their substituted versions.
+-/
+noncomputable def Expr.subst (e : Expr) (map : Array Nat) (n : Fin map.size)
+    (v : Expr) : Expr :=
+  match e with
+  | var m => if n = m then v else var (map.getD m m)
+  | fn m => fn (map.getD m m)
+  | app f e => (f.subst map n v).app (e.subst map n v)
+  | bool b => bool b
+  | cond c et ef => (c.subst map n v).cond (et.subst map n v) (ef.subst map n v)
+
+/--
+Substitutes a value for a variable in a program.
+
+Creates a new version of each function with `n` as a free variable and performs
+substitution of the program expression.
+-/
+noncomputable def Program.subst (p : Program) (n : Fin p.size) (v : Expr) :
+    Program :=
+  let lmap := p.labelMap n
+  let map := lmap.1.toArray
+  let inv := lmap.2
+  have h : p.size = map.size := by simp [map]
+  let fnExt : Vector Expr inv.size :=
+    ⟨inv.map (p.fn[·].subst map (h ▸ n) v), by simp⟩
+  let tyExt : Vector Ty inv.size :=
+    ⟨inv.map (p.ty[·]), by simp⟩
+  {
+    size := _
+    fn := p.fn ++ fnExt
+    ty := p.ty ++ tyExt
+    expr := p.expr.subst map (h ▸ n) v
+  }
 
 /-- A fully reduced expression. -/
-inductive Expr.Value {L : Type} : Expr L → Prop where
-  | clos l σ : Value (.clos l σ)
+inductive Expr.Value : Expr → Prop where
+  | fn n : Value (.fn n)
   | bool b : Value (.bool b)
 
-/--
-The small-step reduction relation.
+/-- The small-step reduction relation. -/
+inductive Step : Program → Program → Prop where
+  | app (p : Env) (n : Nat) (e : Expr) (h : n < p.size) :
+    e.Value → Step ⟨p, .app (.fn n) e⟩ (Program.subst ⟨p, p.fn[n]⟩ ⟨n, h⟩ e)
+  | appL (p p' : Env) (f f' e : Expr) :
+    Step ⟨p, f⟩ ⟨p', f'⟩ → Step ⟨p, f.app e⟩ ⟨p', f'.app e⟩
+  | appR (p p' : Env) (f e e' : Expr) :
+    f.Value → Step ⟨p, e⟩ ⟨p', e'⟩ → Step ⟨p, f.app e⟩ ⟨p', f.app e'⟩
+  | condT (p : Env) (et ef : Expr) :
+    Step ⟨p, (.cond (.bool true) et ef)⟩ ⟨p, et⟩
+  | condF (p : Env) (et ef : Expr) :
+    Step ⟨p, (.cond (.bool false) et ef)⟩ ⟨p, ef⟩
+  | condC (p p' : Env) (c c' et ef : Expr) :
+    Step ⟨p, c⟩ ⟨p', c'⟩ → Step ⟨p, c.cond et ef⟩ ⟨p', c'.cond et ef⟩
 
-The relation is parameterised by the program. Beta reduction of closure
-application applies substitutions to the lambda's body using the closure's
-stored environment.
--/
-inductive Step {L : Type} [DecidableEq L] (p : Program L) :
-    Expr L → Expr L → Prop where
-  | fn (l : L) : Step p (.fn l) (.clos l (∅ : Env L))
-  | app (l : L) (σ : Env L) (e : Expr L) :
-    Expr.Value e → Step p (.app (.clos l σ) e) ((p.fn l).subst ([l ↦ e] σ))
-  | appL (f f' e : Expr L) : Step p f f' → Step p (f.app e) (f'.app e)
-  | appR (f e e' : Expr L) : f.Value → Step p e e' → Step p (f.app e) (f.app e')
-  | condT (et ef : Expr L) : Step p (.cond (.bool true) et ef) et
-  | condF (et ef : Expr L) : Step p (.cond (.bool false) et ef) ef
-  | condC (c c' et ef : Expr L) :
-    Step p c c' → Step p (c.cond et ef) (c'.cond et ef)
-
-notation:40 p:41 " / " e:41 " ⇒ " e':41 => Step p e e'
+notation:40 p:41 " ⇒ " p':41 => Step p p'
 
 /-- The reflexive-transitive closure of the reduction relation. -/
-inductive Steps {L : Type} [DecidableEq L] (p : Program L) :
-    Expr L → Expr L → Prop where
-  | refl (e : Expr L) : Steps p e e
-  | step (e e' e'' : Expr L) : Step p e e' → Steps p e' e'' → Steps p e e''
+inductive Steps : Program → Program → Prop where
+  | refl (p : Program) : Steps p p
+  | step (p p' p'' : Program) : Step p p' → Steps p' p'' → Steps p p''
 
-notation:40 p:41 " / " e:41 " ⇒* " e':41 => Steps p e e'
+notation:40 p:41 " ⇒* " p':41 => Steps p p'
 
 /--
-The typing relation.
+The typing relation on expressions.
 
-The relation is parameterised by the program and a context represented by sets
-of the variables and functions in scope (the corresponding types are already
-contained in the program). A variable must be in the context to be well-typed. A
-function reference is well-typed if its body is well-typed in the context
-extended with itself and its bound variable, or if it is already in the context
-(since this requires checking the body anyway). A closure is only well-typed if
-the function body is well-typed in a context containing all the environment's
-variables and the values in the environment are correctly typed.
+The expression is parameterised by the environment, which contains the typing
+information for all variables and functions. Variables and functions are only
+well-typed if their labels are in bounds.
 -/
-inductive Types {L : Type} (p : Program L) :
-    Set L → Set L → Expr L → Ty → Prop where
-  | var (Γv Γf : Set L) (l : L) : l ∈ Γv → Types p Γv Γf (.var l) (p.ty l)
-  | fnRec (Γv Γf : Set L) (l : L) : l ∈ Γf → Types p Γv Γf (.fn l) (p.ty l).cn
-  | fnNew (Γv Γf : Set L) (l : L) :
-    Types p (insert l Γv) (insert l Γf) (p.fn l) .bot →
-    Types p Γv Γf (.fn l) (p.ty l).cn
-  | app (Γv Γf : Set L) (f e : Expr L) (t : Ty) :
-    Types p Γv Γf f t.cn → Types p Γv Γf e t → Types p Γv Γf (f.app e) .bot
-  | clos (Γv Γf : Set L) (l : L) (σ : Env L) :
-    Types p (insert l σ.vars) {l} (p.fn l) .bot →
-    (∀ l' ∈ σ.vars, Types p ∅ ∅ (σ l') (p.ty l')) →
-    Types p Γv Γf (.clos l σ) (p.ty l).cn
-  | bool (Γv Γf : Set L) (b : Bool) : Types p Γv Γf (.bool b) .bool
-  | cond (Γv Γf : Set L) (c et ef : Expr L) (t : Ty) :
-    Types p Γv Γf c .bool → Types p Γv Γf et t → Types p Γv Γf ef t →
-    Types p Γv Γf (c.cond et ef) t
+inductive Expr.Types (p : Env) : Expr → Ty → Prop where
+  | var (n : Nat) (_ : n < p.size) : Types p (var n) p.ty[n]
+  | fn (n : Nat) (_ : n < p.size) : Types p (fn n) p.ty[n].cn
+  | app (f e : Expr) (t : Ty) :
+    Types p f t.cn → Types p e t → Types p (f.app e) .bot
+  | bool (b : Bool) : Types p (bool b) .bool
+  | cond (c et ef : Expr) (t : Ty) :
+    Types p c .bool → Types p et t → Types p ef t → Types p (c.cond et ef) t
 
-notation:60 p:61 " / " Γv:61 ", " Γf:61 " ⊢ " e:61 " : " t:61 =>
-  Types p Γv Γf e t
+notation:60 p:61 " ⊢ " e:61 " : " t:61 => Expr.Types p e t
+
+/--
+The typing relation on programs.
+
+A program is well-typed if the environment is well-typed and the expression is
+well-typed in that context.
+-/
+structure Program.Types (p : Program) (t : Ty) : Prop where
+  ctx_types : ∀ n (_ : n < p.size), p.toEnv ⊢ p.fn[n] : .bot
+  expr_types : p.toEnv ⊢ p.expr : t
+
+notation:60 "⊢ " p:61 " : " t:61 => Program.Types p t
