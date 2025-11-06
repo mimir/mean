@@ -63,6 +63,12 @@ inductive Depends (p : Env) : Nat → Nat → Prop where
   | step (m n k : Nat) (_ : m < p.size) :
     n ≠ m → Free p n p.fn[m] → Depends p n k → Depends p m k
 
+/-- An expression is closed if it has no free variables. -/
+def Expr.Closed (p : Env) (e : Expr) : Prop := ∀ n, ¬Free p n e
+
+/-- A program is closed if its expression is closed in its environment. -/
+def Program.Closed (p : Program) : Prop := p.expr.Closed p.toEnv
+
 open Classical in -- TODO: Remove this by implementing Decidable.
 /--
 Assigns labels for new versions of the functions with free occurrences of `n`.
