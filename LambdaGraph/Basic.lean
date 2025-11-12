@@ -32,6 +32,7 @@ structure Env where
   ty : Vector Ty size
 
 /-- A program consists of an environment and an expression to be evaluated. -/
+@[pp_using_anonymous_constructor]
 structure Program extends Env where
   /-- The expression to be evaluated. -/
   expr : Expr
@@ -43,7 +44,7 @@ A variable occurs free in an expression if the expression itself contains the
 variable, or if it contains a reference to a function in which the variable
 occurs free.
 -/
-inductive Free (p : Env) (n : Nat) : Expr → Prop where
+inductive Expr.Free (p : Env) (n : Nat) : Expr → Prop where
   | var : Free p n (.var n)
   | fn (m : Nat) (_ : m < p.size) : n ≠ m → Free p n p.fn[m] → Free p n (.fn m)
   | appL (f e : Expr) : Free p n f → Free p n (.app f e)
@@ -59,34 +60,47 @@ During substitution, all functions that depend on the substitution variable must
 be rewritten.
 -/
 inductive Depends (p : Env) : Nat → Nat → Prop where
-  | free (m n : Nat) (_ : m < p.size) : n ≠ m → Free p n p.fn[m] → Depends p m n
+  | free (m n : Nat) (_ : m < p.size) : n ≠ m → p.fn[m].Free p n → Depends p m n
   | step (m n k : Nat) (_ : m < p.size) :
-    n ≠ m → Free p n p.fn[m] → Depends p n k → Depends p m k
+    n ≠ m → p.fn[m].Free p n → Depends p n k → Depends p m k
 
 /-- An expression is closed if it has no free variables. -/
-def Expr.Closed (p : Env) (e : Expr) : Prop := ∀ n, ¬Free p n e
+def Expr.Closed (p : Env) (e : Expr) : Prop := ∀ n, ¬e.Free p n
+
+/--
+Free variables of a program.
+
+A variable occurs free in a program if it occurs free in the program's
+expression.
+-/
+def Program.Free (p : Program) (n : Nat) := p.expr.Free p.toEnv n
 
 /-- A program is closed if its expression is closed in its environment. -/
-def Program.Closed (p : Program) : Prop := p.expr.Closed p.toEnv
+def Program.Closed (p : Program) : Prop := ∀ n, ¬p.Free n
+
+/--
+A mapping from old labels to new labels assigned for substitution.
+
+There is also a mapping that maps the newly assigned labels back to their
+original labels.
+-/
+structure LabelMap (p : Env) where
+  fwd : Vector Nat p.size
+  inv : Array (Fin p.size)
 
 open Classical in -- TODO: Remove this by implementing Decidable.
-/--
-Assigns labels for new versions of the functions with free occurrences of `n`.
-
-Returns an array mapping each function label to the label of the new version of
-that function (or itself if there is none), as well as an array mapping each of
-the added labels back to the label of its original function.
--/
+/-- Returns a label map to use for substitution of the variable `n`. -/
 noncomputable def Env.labelMap (p : Env) (n : Nat) :
-    Vector Nat p.size × Array (Fin p.size) :=
-  aux 0 p.size (Vector.ofFn Fin.val) #[]
+    LabelMap p :=
+  let (fwd, inv) := aux 0 (Vector.ofFn Fin.val) #[]
+  ⟨fwd, inv⟩
 where
-  aux i k map inv :=
+  aux i map inv :=
     if h : i < p.size then
       if Depends p i n then
-        aux (i + 1) (k + 1) (map.set i k) (inv.push ⟨i, h⟩)
+        aux (i + 1) (map.set i (p.size + inv.size)) (inv.push ⟨i, h⟩)
       else
-        aux (i + 1) k map inv
+        aux (i + 1) map inv
     else
       (map, inv)
 
@@ -96,40 +110,41 @@ Substitutes a value for a variable in an expression.
 The expression may include references to functions that include the variable to
 be substituted as a free variable. For these functions, new versions need to be
 added to the environment, with their free occurrences substituted as well. This
-function does not perform this change to the environment, but receives an array
-mapping function labels to the labels of their substituted versions.
+function does not perform this change to the environment, but takes a label map
+mapping function labels to the labels assigned to their substituted versions.
 -/
-noncomputable def Expr.subst (e : Expr) (map : Array Nat) (n : Fin map.size)
-    (v : Expr) : Expr :=
+noncomputable def Expr.subst {p : Env} (e : Expr) (map : LabelMap p)
+    (n : Nat) (v : Expr) : Expr :=
   match e with
-  | var m => if n = m then v else var (map.getD m m)
-  | fn m => fn (map.getD m m)
+  | var m => if n = m then v else var (map.fwd[m]?.getD m)
+  | fn m => fn (map.fwd[m]?.getD m)
   | app f e => (f.subst map n v).app (e.subst map n v)
   | bool b => bool b
   | cond c et ef => (c.subst map n v).cond (et.subst map n v) (ef.subst map n v)
 
 /--
+Substitutes a value for a variable in an environment.
+
+This creates a new version of each function that depends on `n`, as specified by
+the passed label map.
+-/
+noncomputable def Env.subst (p : Env) (map : LabelMap p) (n : Nat) (v : Expr) :
+    Env :=
+  let fnExt : Vector Expr map.inv.size :=
+    ⟨map.inv.map (p.fn[·].subst map n v), by simp⟩
+  let tyExt : Vector Ty map.inv.size :=
+    ⟨map.inv.map (p.ty[·]), by simp⟩
+  { size := _, fn := p.fn ++ fnExt, ty := p.ty ++ tyExt }
+
+/--
 Substitutes a value for a variable in a program.
 
-Creates a new version of each function with `n` as a free variable and performs
-substitution of the program expression.
+This computes the map for translating old labels into new ones and applies the
+substitution to the environment and the expression.
 -/
-noncomputable def Program.subst (p : Program) (n : Fin p.size) (v : Expr) :
-    Program :=
-  let lmap := p.labelMap n
-  let map := lmap.1.toArray
-  let inv := lmap.2
-  have h : p.size = map.size := by simp [map]
-  let fnExt : Vector Expr inv.size :=
-    ⟨inv.map (p.fn[·].subst map (h ▸ n) v), by simp⟩
-  let tyExt : Vector Ty inv.size :=
-    ⟨inv.map (p.ty[·]), by simp⟩
-  {
-    size := _
-    fn := p.fn ++ fnExt
-    ty := p.ty ++ tyExt
-    expr := p.expr.subst map (h ▸ n) v
-  }
+noncomputable def Program.subst (p : Program) (n : Nat) (v : Expr) : Program :=
+  let map := p.labelMap n
+  ⟨p.toEnv.subst map n v, p.expr.subst map n v⟩
 
 /-- A fully reduced expression. -/
 inductive Expr.Value : Expr → Prop where
@@ -138,8 +153,8 @@ inductive Expr.Value : Expr → Prop where
 
 /-- The small-step reduction relation. -/
 inductive Step : Program → Program → Prop where
-  | app (p : Env) (n : Nat) (e : Expr) (h : n < p.size) :
-    e.Value → Step ⟨p, .app (.fn n) e⟩ (Program.subst ⟨p, p.fn[n]⟩ ⟨n, h⟩ e)
+  | app (p : Env) (n : Nat) (e : Expr) (_ : n < p.size) :
+    e.Value → Step ⟨p, .app (.fn n) e⟩ (Program.subst ⟨p, p.fn[n]⟩ n e)
   | appL (p p' : Env) (f f' e : Expr) :
     Step ⟨p, f⟩ ⟨p', f'⟩ → Step ⟨p, f.app e⟩ ⟨p', f'.app e⟩
   | appR (p p' : Env) (f e e' : Expr) :
@@ -179,13 +194,22 @@ inductive Expr.Types (p : Env) : Expr → Ty → Prop where
 notation:60 p:61 " ⊢ " e:61 " : " t:61 => Expr.Types p e t
 
 /--
+The typing predicate for environments.
+
+An environment is well-typed if all function bodies are well-typed.
+-/
+def Env.Types (p : Env) : Prop := ∀ {n}, (_ : n < p.size) → p ⊢ p.fn[n] : .bot
+
+notation:60 "⊢ " p:61 => Env.Types p
+
+/--
 The typing relation on programs.
 
 A program is well-typed if the environment is well-typed and the expression is
 well-typed in that context.
 -/
 structure Program.Types (p : Program) (t : Ty) : Prop where
-  ctx_types : ∀ n (_ : n < p.size), p.toEnv ⊢ p.fn[n] : .bot
+  env_types : ⊢ p.toEnv
   expr_types : p.toEnv ⊢ p.expr : t
 
 notation:60 "⊢ " p:61 " : " t:61 => Program.Types p t
