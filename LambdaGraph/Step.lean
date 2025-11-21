@@ -140,7 +140,7 @@ theorem preservation_closed {p p' : Computation} {t : Ty} (ht : ⊢ p : t)
       eq_map_of_free_in_subst hmap hp hfn he hce hve hm
     simp only [Fin.getElem_fin] at hne
     simp only at hf
-    have hd : ¬Nests p n n := by
+    have hd : n ⊁[p] n := by
       intro hd
       obtain ⟨m, hm, hf⟩ := nests_self hd
       exact hcf m (.fn _ _ hm hf)

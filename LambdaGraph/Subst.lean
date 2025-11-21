@@ -17,7 +17,7 @@ noncomputable def Program.labelMap (p : Program) (n : Nat) : LabelMap p :=
 where
   aux i map inv :=
     if h : i < p.size then
-      if Nests p n i then
+      if n ≻[p] i then
         aux (i + 1) (map.set i (p.size + inv.size)) (inv.push ⟨i, h⟩)
       else
         aux (i + 1) map inv
@@ -104,13 +104,13 @@ structure LabelMap.ValidNew {p : Program} (map : LabelMap p) {i : Nat}
 
 structure LabelMap.Valid {p : Program} (map : LabelMap p) (n : Nat) : Prop where
   lt : n < p.size
-  not_nests : ∀ {i} (h : i < p.size), ¬Nests p n i → map.fwd[i] = i
-  nests : ∀ {i} (h : i < p.size), Nests p n i → map.ValidNew h
+  not_nests : ∀ {i} (h : i < p.size), n ⊁[p] i → map.fwd[i] = i
+  nests : ∀ {i} (h : i < p.size), n ≻[p] i → map.ValidNew h
 
 theorem LabelMap.Valid.eq_or_new {p : Program} {map : LabelMap p} {n : Nat}
     (hmap : map.Valid n) {i : Nat} (hi : i < p.size) :
     map.fwd[i] = i ∨ map.ValidNew hi := by
-  by_cases h : Nests p n i
+  by_cases h : n ≻[p] i
   · right
     exact hmap.nests hi h
   · left
@@ -182,8 +182,7 @@ where
         omega
       · apply ih
         omega
-  aux_le_not_nests {i j fwd inv} (hi : i < p.size) (hj : j ≤ i)
-      (h : ¬Nests p n i) :
+  aux_le_not_nests {i j fwd inv} (hi : i < p.size) (hj : j ≤ i) (h : n ⊁[p] i) :
       (Program.labelMap.aux p n j fwd inv).fwd[i] = fwd[i] := by
     have (eq := hd) d := i - j
     induction d generalizing j fwd inv with unfold Program.labelMap.aux
@@ -200,8 +199,7 @@ where
         rw [this]
         apply ih <;> omega
       · apply ih <;> omega
-  aux_le_nests {i j fwd inv} (hi : i < p.size) (hj : j ≤ i)
-      (h : Nests p n i) :
+  aux_le_nests {i j fwd inv} (hi : i < p.size) (hj : j ≤ i) (h : n ≻[p] i) :
       (Program.labelMap.aux p n j fwd inv).ValidNew hi := by
     have (eq := hd) d := i - j
     induction d generalizing j fwd inv with unfold Program.labelMap.aux
@@ -374,7 +372,7 @@ theorem not_free_in_subst {p : Program} {e v : Expr} {n : Nat}
       rw [subst_fn_eq _ _ hm] at hf
       replace hf := free_of_free_in_subst hp (hp hm) hf
       exact hc n (.fn _ _ hne hf)
-    · by_cases hd : Nests p n i
+    · by_cases hd : n ≻[p] i
       · obtain ⟨hle, hlt, hinv⟩ := hmap.nests hi hd
         exact ih (hp hi) (by simp [*, Program.subst])
       · have hi' := hmap.not_nests hi hd
@@ -434,7 +432,7 @@ theorem eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
       replace hf := free_of_free_in_subst hp (hp hk) hf
       exfalso
       exact hc m (.fn _ _ hne hf)
-    · by_cases hd : Nests p n i
+    · by_cases hd : n ≻[p] i
       · obtain ⟨hle, hlt, hinv⟩ := hmap.nests hi hd
         obtain ⟨j, rfl, hj⟩ := ih (hp hi) (by simp [*, Program.subst])
         have hij : j ≠ i := by
@@ -445,7 +443,7 @@ theorem eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
         simp only [Fin.getElem_fin, hi', subst_fn_eq v map hi] at hf
         replace hf := free_of_free_in_subst hp (hp hi) hf
         simp [hi'] at hne
-        have hm : ¬Nests p n m := fun h => hd (.step _ _ hi hne hf h)
+        have hm : n ⊁[p] m := fun h => hd (.step _ _ hi hne hf h)
         have hlt := lt_size_of_free hp (hp hi) hf
         have hm' := hmap.not_nests hlt hm
         refine ⟨⟨m, hlt⟩, by simp [hm'], .fn _ hi hne hf⟩

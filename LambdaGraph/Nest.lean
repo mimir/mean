@@ -27,6 +27,9 @@ inductive Nests (p : Program) (n : Nat) : Nat → Prop where
   | step (m k : Nat) (_ : k < p.size) :
     m ≠ k → p.fn[k].Free p m → Nests p n m → Nests p n k
 
+notation:40 n:41 " ≻[" p:min "] " m:41 => Nests p n m
+notation:40 n:41 " ⊁[" p:min "] " m:41 => ¬n ≻[p] m
+
 /-- An expression is closed if it has no free variables. -/
 def Expr.Closed (p : Program) (e : Expr) : Prop := ∀ n, ¬e.Free p n
 
@@ -80,11 +83,11 @@ theorem lt_size_of_free {p : Program} {e : Expr} {n : Nat} (hp : p.ValidRefs)
     (he : e.ValidRefs p) (hf : e.Free p n) : n < p.size := by
   induction hf with cases he <;> apply_rules
 
-theorem Nests.lt {p : Program} {m n : Nat} : Nests p n m → m < p.size
+theorem Nests.lt {p : Program} {m n : Nat} : n ≻[p] m → m < p.size
   | free _ hm _ _ => hm
   | step _ _ hm _ _ _ => hm
 
 theorem nests_self {p : Program} {n : Nat} :
-    (h : Nests p n n) → ∃ m ≠ n, (p.fn[n]'h.lt).Free p m
+    (h : n ≻[p] n) → ∃ m ≠ n, (p.fn[n]'h.lt).Free p m
   | .free _ _ hne _ => nomatch hne
   | .step k _ _ hne hf _ => ⟨k, hne, hf⟩
