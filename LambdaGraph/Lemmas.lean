@@ -1,10 +1,10 @@
 import LambdaGraph.Basic
 
 @[simp]
-theorem not_closed_var {p : Env} {n : Nat} : ¬(Expr.var n).Closed p :=
+theorem not_closed_var {p : Program} {n : Nat} : ¬(Expr.var n).Closed p :=
   fun h => h n .var
 
-theorem fn_closed_iff {p : Env} {m : Nat} :
+theorem fn_closed_iff {p : Program} {m : Nat} :
     (Expr.fn m).Closed p ↔ ∀ n ≠ m, (_ : m < p.size) → ¬p.fn[m].Free p n := by
   constructor
   · intro hc n hn _
@@ -16,7 +16,7 @@ theorem fn_closed_iff {p : Env} {m : Nat} :
       solve_by_elim
 
 @[simp]
-theorem app_closed_iff {p : Env} {f e : Expr} :
+theorem app_closed_iff {p : Program} {f e : Expr} :
     (f.app e).Closed p ↔ f.Closed p ∧ e.Closed p := by
   constructor
   · intro h
@@ -24,65 +24,67 @@ theorem app_closed_iff {p : Env} {f e : Expr} :
   · rintro ⟨hf, he⟩ n (- | -) <;> solve_by_elim
 
 @[simp]
-theorem bool_closed (p : Env) (b : Bool) : (Expr.bool b).Closed p := nofun
+theorem bool_closed (p : Program) (b : Bool) : (Expr.bool b).Closed p := nofun
 
 @[simp]
-theorem cond_closed_iff {p : Env} {c et ef : Expr} :
+theorem cond_closed_iff {p : Program} {c et ef : Expr} :
     (c.cond et ef).Closed p ↔ c.Closed p ∧ et.Closed p ∧ ef.Closed p := by
   constructor
   · intro h
-    and_intros <;> solve_by_elim [Expr.Free.condC, Expr.Free.condT, Expr.Free.condF]
+    open Expr.Free in
+    and_intros <;> solve_by_elim [condC, condT, condF]
   · rintro ⟨hc, het, hef⟩ n (- | - | -) <;> solve_by_elim
 
-theorem value_types_cn {p : Env} {v : Expr} {t : Ty} (h : p ⊢ v : t.cn) :
+theorem value_types_cn {p : Program} {v : Expr} {t : Ty} (h : p ⊢ v : t.cn) :
     v.Value → ∃ n, v = .fn n
   | .fn n => by simp
   | .bool b => nomatch h
 
-theorem value_types_bool {p : Env} {v : Expr} (h : p ⊢ v : .bool) :
+theorem value_types_bool {p : Program} {v : Expr} (h : p ⊢ v : .bool) :
     v.Value → ∃ b, v = .bool b
   | .fn n => nomatch h
   | .bool b => by simp
 
-theorem size_le_of_step {p p' : Program} (h : p ⇒ p') : p.size ≤ p'.size := by
-  induction h with simp [*, Env.subst, Program.subst]
+theorem size_le_of_step {p p' : Computation} (h : p ⇒ p') :
+    p.size ≤ p'.size := by
+  induction h with simp [*, Program.subst, Computation.subst]
 
-theorem lt_size_of_step {p p' : Program} {n : Nat} (hn : n < p.size)
+theorem lt_size_of_step {p p' : Computation} {n : Nat} (hn : n < p.size)
     (h : p ⇒ p') : n < p'.size := Nat.lt_of_lt_of_le hn (size_le_of_step h)
 
-theorem fn_eq_of_step {p p' : Program} {n : Nat} (hn : n < p.size) (h : p ⇒ p')
-    : p.fn[n] = p'.fn[n]'(lt_size_of_step hn h) := by
-  induction h with simp [*, Env.subst, Program.subst]
+theorem fn_eq_of_step {p p' : Computation} {n : Nat} (hn : n < p.size)
+    (h : p ⇒ p') : p.fn[n] = p'.fn[n]'(lt_size_of_step hn h) := by
+  induction h with simp [*, Program.subst, Computation.subst]
 
-theorem ty_eq_of_step {p p' : Program} {n : Nat} (hn : n < p.size) (h : p ⇒ p')
-    : p.ty[n] = p'.ty[n]'(lt_size_of_step hn h) := by
-  induction h with simp [*, Env.subst, Program.subst]
+theorem ty_eq_of_step {p p' : Computation} {n : Nat} (hn : n < p.size)
+    (h : p ⇒ p') : p.ty[n] = p'.ty[n]'(lt_size_of_step hn h) := by
+  induction h with simp [*, Program.subst, Computation.subst]
 
-theorem types_of_step {p p' : Program} {e : Expr} {t : Ty} (ht : p.toEnv ⊢ e : t)
-    (hs : p ⇒ p') : p'.toEnv ⊢ e : t := by
+theorem types_of_step {p p' : Computation} {e : Expr} {t : Ty}
+    (ht : p.toProgram ⊢ e : t) (hs : p ⇒ p') : p'.toProgram ⊢ e : t := by
   induction ht with
     (try rw [ty_eq_of_step ‹_› hs]) <;> constructor <;> assumption
 
-theorem env_subst_size_le {p : Env} {v : Expr} {n : Nat} {map : LabelMap p} :
-    p.size ≤ (p.subst map n v).size := by
-  simp [Env.subst]
+theorem program_subst_size_le {p : Program} {v : Expr} {n : Nat}
+    {map : LabelMap p} : p.size ≤ (p.subst map n v).size := by
+  simp [Program.subst]
 
-theorem lt_subst_size {p : Env} (v : Expr) {n : Nat} (map : LabelMap p)
+theorem lt_subst_size {p : Program} (v : Expr) {n : Nat} (map : LabelMap p)
     (hn : n < p.size) : n < (p.subst map n v).size :=
-  Nat.lt_of_lt_of_le hn env_subst_size_le
+  Nat.lt_of_lt_of_le hn program_subst_size_le
 
-theorem subst_fn_eq {p : Env} (v : Expr) {m n : Nat} (map : LabelMap p)
+theorem subst_fn_eq {p : Program} (v : Expr) {m n : Nat} (map : LabelMap p)
     (hn : m < p.size) :
     (p.subst map n v).fn[m]'(lt_subst_size v map hn) = p.fn[m] := by
-  simp [hn, Env.subst]
+  simp [hn, Program.subst]
 
-theorem subst_ty_eq {p : Env} (v : Expr) {m n : Nat} (map : LabelMap p)
+theorem subst_ty_eq {p : Program} (v : Expr) {m n : Nat} (map : LabelMap p)
     (hn : m < p.size) :
     (p.subst map n v).ty[m]'(lt_subst_size v map hn) = p.ty[m] := by
-  simp [hn, Env.subst]
+  simp [hn, Program.subst]
 
-theorem expr_types_in_subst {p : Env} {e : Expr} (v : Expr) {t : Ty} (n : Nat)
-    (map : LabelMap p) (ht : p ⊢ e : t) :
+theorem expr_types_in_subst {p : Program} {e : Expr} (v : Expr) {t : Ty}
+    (n : Nat) (map : LabelMap p) (ht : p ⊢ e : t) :
     p.subst map n v ⊢ e : t := by
   induction ht with try constructor <;> assumption
   | var m hm =>
@@ -92,36 +94,36 @@ theorem expr_types_in_subst {p : Env} {e : Expr} (v : Expr) {t : Ty} (n : Nat)
     rw [← subst_ty_eq v map hm]
     constructor
 
-theorem Depends.lt {p : Env} {m n : Nat} : Depends p m n → m < p.size
-  | free _ _ hm _ _ => hm
-  | step _ _ _ hm _ _ _ => hm
+theorem Nests.lt {p : Program} {m n : Nat} : Nests p n m → m < p.size
+  | free _ hm _ _ => hm
+  | step _ _ hm _ _ _ => hm
 
-theorem depends_self {p : Env} {n : Nat} :
-    (h : Depends p n n) → ∃ m ≠ n, (p.fn[n]'h.lt).Free p m
-  | .free _ _ _ hne _ => nomatch hne
-  | .step _ k _ _ hne hf _ => ⟨k, hne, hf⟩
+theorem nests_self {p : Program} {n : Nat} :
+    (h : Nests p n n) → ∃ m ≠ n, (p.fn[n]'h.lt).Free p m
+  | .free _ _ hne _ => nomatch hne
+  | .step k _ _ hne hf _ => ⟨k, hne, hf⟩
 
-structure LabelMap.ValidNew {p : Env} (map : LabelMap p) {i : Nat}
+structure LabelMap.ValidNew {p : Program} (map : LabelMap p) {i : Nat}
     (h : i < p.size) : Prop where
   fwd_ge : p.size ≤ map.fwd[i]
   fwd_lt : map.fwd[i] < p.size + map.inv.size
   inv_fwd_sub : map.inv[map.fwd[i] - p.size] = i
 
-structure LabelMap.Valid {p : Env} (map : LabelMap p) (n : Nat) : Prop where
+structure LabelMap.Valid {p : Program} (map : LabelMap p) (n : Nat) : Prop where
   lt : n < p.size
-  not_depends : ∀ {i} (h : i < p.size), ¬Depends p i n → map.fwd[i] = i
-  depends : ∀ {i} (h : i < p.size), Depends p i n → map.ValidNew h
+  not_nests : ∀ {i} (h : i < p.size), ¬Nests p n i → map.fwd[i] = i
+  nests : ∀ {i} (h : i < p.size), Nests p n i → map.ValidNew h
 
-theorem LabelMap.Valid.eq_or_new {p : Env} {map : LabelMap p} {n : Nat}
+theorem LabelMap.Valid.eq_or_new {p : Program} {map : LabelMap p} {n : Nat}
     (hmap : map.Valid n) {i : Nat} (hi : i < p.size) :
     map.fwd[i] = i ∨ map.ValidNew hi := by
-  by_cases h : Depends p i n
+  by_cases h : Nests p n i
   · right
-    exact hmap.depends hi h
+    exact hmap.nests hi h
   · left
-    exact hmap.not_depends hi h
+    exact hmap.not_nests hi h
 
-theorem LabelMap.Valid.fwd_lt {p : Env} {map : LabelMap p} {n : Nat}
+theorem LabelMap.Valid.fwd_lt {p : Program} {map : LabelMap p} {n : Nat}
     (hmap : map.Valid n) {i : Nat} (hi : i < p.size) :
     map.fwd[i] < p.size + map.inv.size := by
   rcases hmap.eq_or_new hi with h | h
@@ -129,22 +131,22 @@ theorem LabelMap.Valid.fwd_lt {p : Env} {map : LabelMap p} {n : Nat}
     omega
   · exact h.fwd_lt
 
-theorem labelMap_valid (p : Env) {n : Nat} (hn : n < p.size) :
+theorem labelMap_valid (p : Program) {n : Nat} (hn : n < p.size) :
     (p.labelMap n).Valid n where
   lt := hn
-  not_depends := by
+  not_nests := by
     intro i hi h
-    unfold Env.labelMap
-    simp [aux_le_not_depends hi (Nat.zero_le i) h]
-  depends := by
+    unfold Program.labelMap
+    simp [aux_le_not_nests hi (Nat.zero_le i) h]
+  nests := by
     intro i hi h
-    unfold Env.labelMap
-    exact aux_le_depends hi (Nat.zero_le i) h
+    unfold Program.labelMap
+    exact aux_le_nests hi (Nat.zero_le i) h
 where
   aux_gt_map {i j map inv} (hi : i < p.size) (hj : i < j) :
-      (Env.labelMap.aux p n j map inv).1[i] = map[i] := by
+      (Program.labelMap.aux p n j map inv).1[i] = map[i] := by
     have (eq := hd) d := p.size - j
-    induction d generalizing j map inv with unfold Env.labelMap.aux
+    induction d generalizing j map inv with unfold Program.labelMap.aux
     | zero => simp [show ¬j < p.size by omega]
     | succ d ih =>
       split
@@ -156,9 +158,9 @@ where
         · apply ih <;> omega
       · simp
   aux_inv_size_ge {j map inv} :
-      inv.size ≤ (Env.labelMap.aux p n j map inv).2.size := by
+      inv.size ≤ (Program.labelMap.aux p n j map inv).2.size := by
     have (eq := hd) d := p.size - j
-    induction d generalizing j map inv with unfold Env.labelMap.aux
+    induction d generalizing j map inv with unfold Program.labelMap.aux
     | zero => simp [show ¬j < p.size by omega]
     | succ d ih =>
       have hj : j < p.size := by omega
@@ -171,10 +173,10 @@ where
       · apply ih
         omega
   aux_gt_inv {i j k map inv} (hk : k < inv.size)
-      (hk' : k < (Env.labelMap.aux p n j map inv).2.size) :
-      (Env.labelMap.aux p n j map inv).2[k] = inv[k] := by
+      (hk' : k < (Program.labelMap.aux p n j map inv).2.size) :
+      (Program.labelMap.aux p n j map inv).2[k] = inv[k] := by
     have (eq := hd) d := p.size - j
-    induction d generalizing j map inv with unfold Env.labelMap.aux
+    induction d generalizing j map inv with unfold Program.labelMap.aux
     | zero => simp [show ¬j < p.size by omega]
     | succ d ih =>
       have hj : j < p.size := by omega
@@ -187,11 +189,11 @@ where
         omega
       · apply ih
         omega
-  aux_le_not_depends {i j map inv} (hi : i < p.size) (hj : j ≤ i)
-      (h : ¬Depends p i n) :
-      (Env.labelMap.aux p n j map inv).1[i] = map[i] := by
+  aux_le_not_nests {i j map inv} (hi : i < p.size) (hj : j ≤ i)
+      (h : ¬Nests p n i) :
+      (Program.labelMap.aux p n j map inv).1[i] = map[i] := by
     have (eq := hd) d := i - j
-    induction d generalizing j map inv with unfold Env.labelMap.aux
+    induction d generalizing j map inv with unfold Program.labelMap.aux
     | zero =>
       simp only [*, show j = i by omega]
       apply aux_gt_map
@@ -205,12 +207,12 @@ where
         rw [this]
         apply ih <;> omega
       · apply ih <;> omega
-  aux_le_depends {i j map inv} (hi : i < p.size) (hj : j ≤ i)
-      (h : Depends p i n) :
-      let (map', inv') := Env.labelMap.aux p n j map inv
+  aux_le_nests {i j map inv} (hi : i < p.size) (hj : j ≤ i)
+      (h : Nests p n i) :
+      let (map', inv') := Program.labelMap.aux p n j map inv
       LabelMap.ValidNew ⟨map', inv'⟩ hi := by
     have (eq := hd) d := i - j
-    induction d generalizing j map inv with unfold Env.labelMap.aux
+    induction d generalizing j map inv with unfold Program.labelMap.aux
     | zero =>
       simp [*, show j = i by omega]
       refine ⟨?_, ?_, ?_⟩
@@ -231,14 +233,14 @@ where
       simp [hj']
       split <;> apply ih <;> omega
 
-theorem subst_ty_map_eq {p : Env} {v : Expr} {m n : Nat} {map : LabelMap p}
+theorem subst_ty_map_eq {p : Program} {v : Expr} {m n : Nat} {map : LabelMap p}
     (hm : m < p.size) (hmap : map.Valid n) :
     (p.subst map n v).ty[map.fwd[m]]'(hmap.fwd_lt hm) = p.ty[m] := by
   rcases hmap.eq_or_new hm with h | ⟨hle, hlt, hinv⟩
-  · simp [h, hm, Env.subst]
-  · simp [*, Env.subst]
+  · simp [h, hm, Program.subst]
+  · simp [*, Program.subst]
 
-theorem expr_subst_types {p : Env} {e v : Expr} {t : Ty} {n : Nat}
+theorem expr_subst_types {p : Program} {e v : Expr} {t : Ty} {n : Nat}
     {map : LabelMap p} (hmap : map.Valid n) (ht : p ⊢ e : t)
     (htv : p ⊢ v : p.ty[n]'hmap.lt) :
     p.subst map n v ⊢ e.subst map n v : t := by
@@ -257,14 +259,14 @@ theorem expr_subst_types {p : Env} {e v : Expr} {t : Ty} {n : Nat}
     rw [← subst_ty_map_eq hm hmap]
     constructor
 
-theorem subst_types {p : Env} {e v : Expr} {t : Ty} {n : Nat} (hn : n < p.size)
-    (ht : ⊢ ⟨p, e⟩ : t) (htv : p ⊢ v : p.ty[n]) :
-    ⊢ Program.subst ⟨p, e⟩ n v : t := by
+theorem subst_types {p : Program} {e v : Expr} {t : Ty} {n : Nat}
+    (hn : n < p.size) (ht : ⊢ ⟨p, e⟩ : t) (htv : p ⊢ v : p.ty[n]) :
+    ⊢ Computation.subst ⟨p, e⟩ n v : t := by
   obtain ⟨htp, ht⟩ := ht
   dsimp only at *
   constructor
   · intro m hm
-    simp [Env.subst, Program.subst]
+    simp [Program.subst, Computation.subst]
     by_cases hm' : m < p.size
     · simp [hm']
       exact expr_types_in_subst _ _ _ (htp _)
@@ -273,7 +275,7 @@ theorem subst_types {p : Env} {e v : Expr} {t : Ty} {n : Nat} (hn : n < p.size)
       exact expr_subst_types (labelMap_valid _ hn) (htp _) htv
   · exact expr_subst_types (labelMap_valid _ hn) ht htv
 
-inductive Expr.ValidRefs (p : Env) : Expr → Prop where
+inductive Expr.ValidRefs (p : Program) : Expr → Prop where
   | var (n : Nat) : n < p.size → (Expr.var n).ValidRefs p
   | fn (n : Nat) : n < p.size → (Expr.fn n).ValidRefs p
   | app (f e : Expr) : f.ValidRefs p → e.ValidRefs p → (f.app e).ValidRefs p
@@ -281,21 +283,21 @@ inductive Expr.ValidRefs (p : Env) : Expr → Prop where
   | cond (c et ef : Expr) : c.ValidRefs p → et.ValidRefs p → ef.ValidRefs p →
     (c.cond et ef).ValidRefs p
 
-theorem Expr.Types.validRefs {p : Env} {e : Expr} {t : Ty} (ht : p ⊢ e : t) :
-    e.ValidRefs p := by
+theorem Expr.Types.validRefs {p : Program} {e : Expr} {t : Ty} (ht : p ⊢ e : t)
+    : e.ValidRefs p := by
   induction ht with constructor <;> assumption
 
-def Env.ValidRefs (p : Env) : Prop :=
+def Program.ValidRefs (p : Program) : Prop :=
   ∀ {i} (_ : i < p.size), p.fn[i].ValidRefs p
 
-theorem Env.Types.validRefs {p : Env} (ht : ⊢ p) : p.ValidRefs :=
+theorem Program.Types.validRefs {p : Program} (ht : ⊢ p) : p.ValidRefs :=
   fun hi => (ht hi).validRefs
 
-theorem lt_size_of_free {p : Env} {e : Expr} {n : Nat} (hp : p.ValidRefs)
+theorem lt_size_of_free {p : Program} {e : Expr} {n : Nat} (hp : p.ValidRefs)
     (he : e.ValidRefs p) (hf : e.Free p n) : n < p.size := by
   induction hf with cases he <;> apply_rules
 
-theorem subst_eq_var {p : Env} {e v : Expr} {m n : Nat}
+theorem subst_eq_var {p : Program} {e v : Expr} {m n : Nat}
     {map : LabelMap p} (he : e.ValidRefs p) (hc : v.Closed p)
     (h : e.subst map n v = .var m) :
     ∃ (i : Fin p.size), m = map.fwd[i] ∧ e = .var i := by
@@ -310,7 +312,7 @@ theorem subst_eq_var {p : Env} {e v : Expr} {m n : Nat}
     · exists ⟨k, hk⟩
       simpa [hnk, hk, eq_comm] using h
 
-theorem subst_ne_subst_var {p : Env} {e v : Expr} {n : Nat}
+theorem subst_ne_subst_var {p : Program} {e v : Expr} {n : Nat}
     {map : LabelMap p} (hmap : map.Valid n) (hv : v.Value) :
     e.subst map n v ≠ .var n := by
   cases e with simp only [Expr.subst] <;> try intro; contradiction
@@ -328,7 +330,7 @@ theorem subst_ne_subst_var {p : Env} {e v : Expr} {n : Nat}
           omega
       · simp [*, Ne.symm]
 
-theorem subst_eq_fn {p : Env} {e v : Expr} {m n : Nat} {map : LabelMap p}
+theorem subst_eq_fn {p : Program} {e v : Expr} {m n : Nat} {map : LabelMap p}
     (he : e.ValidRefs p) (h : e.subst map n v = .fn m) :
     e = .var n ∨ ∃ i : Fin p.size, m = map.fwd[i] ∧ e = .fn i := by
   cases e with simp only [Expr.subst] at h <;> try contradiction
@@ -342,8 +344,8 @@ theorem subst_eq_fn {p : Env} {e v : Expr} {m n : Nat} {map : LabelMap p}
     exists ⟨k, hk⟩
     simpa [hk, eq_comm] using h
 
-theorem subst_eq_app {p : Env} {e e₁ e₂ v : Expr} {n : Nat} {map : LabelMap p}
-    (hv : v.Value) (h : e.subst map n v = e₁.app e₂) :
+theorem subst_eq_app {p : Program} {e e₁ e₂ v : Expr} {n : Nat}
+    {map : LabelMap p} (hv : v.Value) (h : e.subst map n v = e₁.app e₂) :
     ∃ e₁' e₂' : Expr, e = e₁'.app e₂' := by
   cases e with try solve | simp [Expr.subst] at h
   | var m =>
@@ -356,8 +358,8 @@ theorem subst_eq_app {p : Env} {e e₁ e₂ v : Expr} {n : Nat} {map : LabelMap 
     simp only [Expr.subst, Expr.app.injEq] at h
     exists e₁', e₂'
 
-theorem subst_eq_cond {p : Env} {e c et ef v : Expr} {n : Nat} {map : LabelMap p}
-    (hv : v.Value) (h : e.subst map n v = c.cond et ef) :
+theorem subst_eq_cond {p : Program} {e c et ef v : Expr} {n : Nat}
+    {map : LabelMap p} (hv : v.Value) (h : e.subst map n v = c.cond et ef) :
     ∃ c' et' ef' : Expr, e = c'.cond et' ef' := by
   cases e with try solve | simp [Expr.subst] at h
   | var m =>
@@ -370,7 +372,7 @@ theorem subst_eq_cond {p : Env} {e c et ef v : Expr} {n : Nat} {map : LabelMap p
     simp only [Expr.subst, Expr.cond.injEq] at h
     exists c', et', ef'
 
-theorem free_of_free_in_subst {p : Env} {e v : Expr} {m n : Nat}
+theorem free_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
     {map : LabelMap p} (hp : p.ValidRefs) (he : e.ValidRefs p)
     (hf : e.Free (p.subst map n v) m) : e.Free p m := by
   generalize hp' : p.subst map n v = p' at hf
@@ -385,10 +387,10 @@ theorem free_of_free_in_subst {p : Env} {e v : Expr} {m n : Nat}
       rw [subst_fn_eq _ _ hk] at ih
       exact ih (hp hk)
 
-theorem not_free_in_subst {p : Env} {e v : Expr} {n : Nat} {map : LabelMap p}
-    (hmap : map.Valid n) (hp : p.ValidRefs) (he : e.ValidRefs p)
-    (hv : v.ValidRefs p) (hc : v.Closed p) (hvv : v.Value) :
-    ¬(e.subst map n v).Free (p.subst map n v) n := by
+theorem not_free_in_subst {p : Program} {e v : Expr} {n : Nat}
+    {map : LabelMap p} (hmap : map.Valid n) (hp : p.ValidRefs)
+    (he : e.ValidRefs p) (hv : v.ValidRefs p) (hc : v.Closed p) (hvv : v.Value)
+    : ¬(e.subst map n v).Free (p.subst map n v) n := by
   intro hf
   generalize hp' : p.subst map n v = p', he' : e.subst map n v = e' at hf
   induction hf generalizing e with
@@ -402,14 +404,14 @@ theorem not_free_in_subst {p : Env} {e v : Expr} {n : Nat} {map : LabelMap p}
       rw [subst_fn_eq _ _ hm] at hf
       replace hf := free_of_free_in_subst hp (hp hm) hf
       exact hc n (.fn _ _ hne hf)
-    · by_cases hd : Depends p i n
-      · obtain ⟨hle, hlt, hinv⟩ := hmap.depends hi hd
-        exact ih (hp hi) (by simp [*, Env.subst])
-      · have hi' := hmap.not_depends hi hd
+    · by_cases hd : Nests p n i
+      · obtain ⟨hle, hlt, hinv⟩ := hmap.nests hi hd
+        exact ih (hp hi) (by simp [*, Program.subst])
+      · have hi' := hmap.not_nests hi hd
         simp only [Fin.getElem_fin, hi', subst_fn_eq _ _ hi] at hf
         simp only [Fin.getElem_fin, hi', ne_eq] at hne
         replace hf := free_of_free_in_subst hp (hp hi) hf
-        exact hd (.free _ _ _ hne hf)
+        exact hd (.free _ _ hne hf)
   | appL f e'' hf ih =>
     obtain ⟨f', e''', rfl, rfl⟩ := subst_eq_app hvv he'
     simp only [Expr.subst] at he'
@@ -441,7 +443,7 @@ theorem not_free_in_subst {p : Env} {e v : Expr} {n : Nat} {map : LabelMap p}
     have .cond _ _ _ hc het hef := he
     exact ih hef rfl
 
-theorem eq_map_of_free_in_subst {p : Env} {e v : Expr} {m n : Nat}
+theorem eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
     {map : LabelMap p} (hmap : map.Valid n) (hp : p.ValidRefs)
     (he : e.ValidRefs p) (hv : v.ValidRefs p) (hc : v.Closed p)
     (hvv : v.Value) (hf : (e.subst map n v).Free (p.subst map n v) m) :
@@ -462,20 +464,20 @@ theorem eq_map_of_free_in_subst {p : Env} {e v : Expr} {m n : Nat}
       replace hf := free_of_free_in_subst hp (hp hk) hf
       exfalso
       exact hc m (.fn _ _ hne hf)
-    · by_cases hd : Depends p i n
-      · obtain ⟨hle, hlt, hinv⟩ := hmap.depends hi hd
-        obtain ⟨j, rfl, hj⟩ := ih (hp hi) (by simp [*, Env.subst])
+    · by_cases hd : Nests p n i
+      · obtain ⟨hle, hlt, hinv⟩ := hmap.nests hi hd
+        obtain ⟨j, rfl, hj⟩ := ih (hp hi) (by simp [*, Program.subst])
         have hij : j ≠ i := by
           intro rfl
           contradiction
         exact ⟨j, rfl, .fn _ hi hij hj⟩
-      · obtain hi' := hmap.not_depends hi hd
+      · obtain hi' := hmap.not_nests hi hd
         simp only [Fin.getElem_fin, hi', subst_fn_eq v map hi] at hf
         replace hf := free_of_free_in_subst hp (hp hi) hf
         simp [hi'] at hne
-        have hm : ¬Depends p m n := fun h => hd (.step _ _ _ hi hne hf h)
+        have hm : ¬Nests p n m := fun h => hd (.step _ _ hi hne hf h)
         have hlt := lt_size_of_free hp (hp hi) hf
-        have hm' := hmap.not_depends hlt hm
+        have hm' := hmap.not_nests hlt hm
         refine ⟨⟨m, hlt⟩, by simp [hm'], .fn _ hi hne hf⟩
   | appL f e'' hf ih =>
     obtain ⟨f', e''', rfl, rfl⟩ := subst_eq_app hvv he'
@@ -513,18 +515,18 @@ theorem eq_map_of_free_in_subst {p : Env} {e v : Expr} {m n : Nat}
     obtain ⟨i, rfl, hf'⟩ := ih hef rfl
     exact ⟨i, rfl, .condF _ _ _ hf'⟩
 
-theorem closed_of_step {p p' : Program} {e : Expr} (hp : p.ValidRefs)
-    (he : e.ValidRefs p.toEnv) (hc : e.Closed p.toEnv) (hs : p ⇒ p') :
-    e.Closed p'.toEnv := by
+theorem closed_of_step {p p' : Computation} {e : Expr} (hp : p.ValidRefs)
+    (he : e.ValidRefs p.toProgram) (hc : e.Closed p.toProgram) (hs : p ⇒ p') :
+    e.Closed p'.toProgram := by
   intro m hf
   apply hc m
   induction hs with
     dsimp only at * <;> apply_rules
   | app =>
-    dsimp only [Program.subst] at *
+    dsimp only [Computation.subst] at *
     exact free_of_free_in_subst hp he hf
 
-theorem progress {p : Program} {t : Ty} (ht : ⊢ p : t) (hc : p.Closed) :
+theorem progress {p : Computation} {t : Ty} (ht : ⊢ p : t) (hc : p.Closed) :
     p.expr.Value ∨ ∃ p', p ⇒ p' := by
   obtain ⟨p, e⟩ := p
   obtain ⟨htp, hte⟩ := ht
@@ -550,7 +552,7 @@ theorem progress {p : Program} {t : Ty} (ht : ⊢ p : t) (hc : p.Closed) :
     · rcases value_types_bool htc hvc with ⟨_ | _, rfl⟩ <;> repeat constructor
     · exact ⟨_, Step.condC _ _ _ _ _ _ hp⟩
 
-theorem preservation_types {p p' : Program} {t : Ty} (ht : ⊢ p : t)
+theorem preservation_types {p p' : Computation} {t : Ty} (ht : ⊢ p : t)
   (hs : p ⇒ p') : ⊢ p' : t := by
   obtain ⟨htp, ht⟩ := ht
   induction hs generalizing t with
@@ -589,7 +591,7 @@ theorem preservation_types {p p' : Program} {t : Ty} (ht : ⊢ p : t)
       · exact types_of_step htet hs
       · exact types_of_step htef hs
 
-theorem preservation_closed {p p' : Program} {t : Ty} (ht : ⊢ p : t)
+theorem preservation_closed {p p' : Computation} {t : Ty} (ht : ⊢ p : t)
     (hc : p.Closed) (hs : p ⇒ p') : p'.Closed := by
   obtain ⟨htp, ht⟩ := ht
   induction hs generalizing t with
@@ -603,19 +605,19 @@ theorem preservation_closed {p p' : Program} {t : Ty} (ht : ⊢ p : t)
     have he := hte.validRefs
     have hne : n ≠ m := by
       intro rfl
-      simp [Program.subst, Program.Free] at hm
+      simp [Computation.subst, Computation.Free] at hm
       exact not_free_in_subst hmap hp hfn he hce hve hm
     obtain ⟨⟨i, hi⟩, rfl, hf⟩ :=
       eq_map_of_free_in_subst hmap hp hfn he hce hve hm
     simp only [Fin.getElem_fin] at hne
     simp only at hf
-    have hd : ¬Depends p n n := by
+    have hd : ¬Nests p n n := by
       intro hd
-      obtain ⟨m, hm, hf⟩ := depends_self hd
+      obtain ⟨m, hm, hf⟩ := nests_self hd
       exact hcf m (.fn _ _ hm hf)
     have hne : i ≠ n := by
       intro rfl
-      simp [hmap.not_depends hi hd] at hne
+      simp [hmap.not_nests hi hd] at hne
     exact hcf i (.fn _ hn hne hf)
   | appL p p' f f' e hs ih =>
     obtain ⟨hcf, hce⟩ := app_closed_iff.mp hc
