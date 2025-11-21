@@ -12,10 +12,8 @@ structure LabelMap (p : Program) where
 
 open Classical in -- TODO: Remove this by implementing Decidable.
 /-- Returns a label map to use for substitution of the variable `n`. -/
-noncomputable def Program.labelMap (p : Program) (n : Nat) :
-    LabelMap p :=
-  let (fwd, inv) := aux 0 (Vector.ofFn Fin.val) #[]
-  ⟨fwd, inv⟩
+noncomputable def Program.labelMap (p : Program) (n : Nat) : LabelMap p :=
+  aux 0 (Vector.ofFn Fin.val) #[]
 where
   aux i map inv :=
     if h : i < p.size then
@@ -24,7 +22,7 @@ where
       else
         aux (i + 1) map inv
     else
-      (map, inv)
+      ⟨map, inv⟩
 
 /--
 Substitutes a value for a variable in an expression.
@@ -138,24 +136,24 @@ theorem labelMap_valid (p : Program) {n : Nat} (hn : n < p.size) :
     unfold Program.labelMap
     exact aux_le_nests hi (Nat.zero_le i) h
 where
-  aux_gt_map {i j map inv} (hi : i < p.size) (hj : i < j) :
-      (Program.labelMap.aux p n j map inv).1[i] = map[i] := by
+  aux_gt_map {i j fwd inv} (hi : i < p.size) (hj : i < j) :
+      (Program.labelMap.aux p n j fwd inv).fwd[i] = fwd[i] := by
     have (eq := hd) d := p.size - j
-    induction d generalizing j map inv with unfold Program.labelMap.aux
+    induction d generalizing j fwd inv with unfold Program.labelMap.aux
     | zero => simp [show ¬j < p.size by omega]
     | succ d ih =>
       split
       · split
-        · have : map[i] = (map.set j (p.size + inv.size) ‹j < p.size›)[i] := by
+        · have : fwd[i] = (fwd.set j (p.size + inv.size) ‹j < p.size›)[i] := by
             simp [show j ≠ i by omega]
           rw [this]
           apply ih <;> omega
         · apply ih <;> omega
       · simp
-  aux_inv_size_ge {j map inv} :
-      inv.size ≤ (Program.labelMap.aux p n j map inv).2.size := by
+  aux_inv_size_ge {j fwd inv} :
+      inv.size ≤ (Program.labelMap.aux p n j fwd inv).inv.size := by
     have (eq := hd) d := p.size - j
-    induction d generalizing j map inv with unfold Program.labelMap.aux
+    induction d generalizing j fwd inv with unfold Program.labelMap.aux
     | zero => simp [show ¬j < p.size by omega]
     | succ d ih =>
       have hj : j < p.size := by omega
@@ -167,11 +165,11 @@ where
         omega
       · apply ih
         omega
-  aux_gt_inv {i j k map inv} (hk : k < inv.size)
-      (hk' : k < (Program.labelMap.aux p n j map inv).2.size) :
-      (Program.labelMap.aux p n j map inv).2[k] = inv[k] := by
+  aux_gt_inv {i j k fwd inv} (hk : k < inv.size)
+      (hk' : k < (Program.labelMap.aux p n j fwd inv).inv.size) :
+      (Program.labelMap.aux p n j fwd inv).inv[k] = inv[k] := by
     have (eq := hd) d := p.size - j
-    induction d generalizing j map inv with unfold Program.labelMap.aux
+    induction d generalizing j fwd inv with unfold Program.labelMap.aux
     | zero => simp [show ¬j < p.size by omega]
     | succ d ih =>
       have hj : j < p.size := by omega
@@ -184,11 +182,11 @@ where
         omega
       · apply ih
         omega
-  aux_le_not_nests {i j map inv} (hi : i < p.size) (hj : j ≤ i)
+  aux_le_not_nests {i j fwd inv} (hi : i < p.size) (hj : j ≤ i)
       (h : ¬Nests p n i) :
-      (Program.labelMap.aux p n j map inv).1[i] = map[i] := by
+      (Program.labelMap.aux p n j fwd inv).fwd[i] = fwd[i] := by
     have (eq := hd) d := i - j
-    induction d generalizing j map inv with unfold Program.labelMap.aux
+    induction d generalizing j fwd inv with unfold Program.labelMap.aux
     | zero =>
       simp only [*, show j = i by omega]
       apply aux_gt_map
@@ -197,17 +195,16 @@ where
       have hj' := Nat.lt_of_le_of_lt hj hi
       simp only [hj', ↓reduceDIte]
       split
-      · have : map[i] = (map.set j (p.size + inv.size) hj')[i] := by
+      · have : fwd[i] = (fwd.set j (p.size + inv.size) hj')[i] := by
           simp [show j ≠ i by omega]
         rw [this]
         apply ih <;> omega
       · apply ih <;> omega
-  aux_le_nests {i j map inv} (hi : i < p.size) (hj : j ≤ i)
+  aux_le_nests {i j fwd inv} (hi : i < p.size) (hj : j ≤ i)
       (h : Nests p n i) :
-      let (map', inv') := Program.labelMap.aux p n j map inv
-      LabelMap.ValidNew ⟨map', inv'⟩ hi := by
+      (Program.labelMap.aux p n j fwd inv).ValidNew hi := by
     have (eq := hd) d := i - j
-    induction d generalizing j map inv with unfold Program.labelMap.aux
+    induction d generalizing j fwd inv with unfold Program.labelMap.aux
     | zero =>
       simp [*, show j = i by omega]
       refine ⟨?_, ?_, ?_⟩
