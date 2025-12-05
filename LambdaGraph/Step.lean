@@ -180,3 +180,12 @@ theorem preservation_closed {p p' : Computation} {t : Ty} (ht : ⊢ p : t)
       exact (.condC _ _ _ _ _ _ hs)
     · apply closed_of_step htp.validRefs htef.validRefs hcef
       exact (.condC _ _ _ _ _ _ hs)
+
+theorem preservation_wf {p p' : Computation} {t : Ty} (ht : ⊢ p : t)
+    (hwf : p.WF) (hs : p ⇒ p') : p'.WF := by
+  obtain ⟨htp, ht⟩ := ht
+  induction hs generalizing t with
+    try solve | cases ht <;> apply_rules
+  | app p n e hn hve =>
+    have .app _ _ t' htf hte := ht
+    exact subst_wf (labelMap_valid p hn) htp.validRefs hte.validRefs hve hwf
