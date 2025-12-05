@@ -137,7 +137,7 @@ theorem preservation_closed {p p' : Computation} {t : Ty} (ht : ⊢ p : t)
       simp [Computation.subst, Computation.Free] at hm
       exact not_free_in_subst hmap hp hfn he hce hve hm
     obtain ⟨⟨i, hi⟩, rfl, hf⟩ :=
-      eq_map_of_free_in_subst hmap hp hfn he hce hve hm
+      eq_map_of_free_in_subst_of_closed hmap hp hfn he hce hve hm
     simp only [Fin.getElem_fin] at hne
     simp only at hf
     have hd : n ⊁[p] n := by

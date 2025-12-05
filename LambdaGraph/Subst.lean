@@ -361,7 +361,7 @@ theorem subst_validRefs {p : Program} {v : Expr} {n : Nat} {map : LabelMap p}
     apply expr_subst_validRefs <;> apply_rules
 
 theorem subst_eq_var {p : Program} {e v : Expr} {m n : Nat}
-    {map : LabelMap p} (he : e.ValidRefs p) (hc : v.Closed p)
+    {map : LabelMap p} (he : e.ValidRefs p) (hv : v.Value)
     (h : e.subst map n v = .var m) :
     ∃ i : Fin p.size, m = map.fwd[i] ∧ e = .var i := by
   cases e with simp only [Expr.subst] at h <;> try contradiction
@@ -370,8 +370,7 @@ theorem subst_eq_var {p : Program} {e v : Expr} {m n : Nat}
     by_cases hnk : n = k
     · simp only [hnk, ↓reduceIte] at h
       subst v
-      exfalso
-      exact hc m .var
+      nomatch hv
     · exists ⟨k, hk⟩
       simpa [hnk, hk, eq_comm] using h
 
@@ -506,15 +505,16 @@ theorem not_free_in_subst {p : Program} {e v : Expr} {n : Nat}
     have .cond _ _ _ hc het hef := he
     exact ih hef rfl
 
-theorem eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
+theorem free_or_eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
     {map : LabelMap p} (hmap : map.Valid n) (hp : p.ValidRefs)
-    (he : e.ValidRefs p) (hv : v.ValidRefs p) (hc : v.Closed p)
-    (hvv : v.Value) (hf : (e.subst map n v).Free (p.subst map n v) m) :
-    ∃ i : Fin p.size, m = map.fwd[i] ∧ e.Free p i := by
+    (he : e.ValidRefs p) (hv : v.ValidRefs p) (hvv : v.Value)
+    (hf : (e.subst map n v).Free (p.subst map n v) m) :
+    v.Free p m ∨ ∃ i : Fin p.size, m = map.fwd[i] ∧ e.Free p i := by
   generalize hp' : p.subst map n v = p', he' : e.subst map n v = e' at hf
   induction hf generalizing e with
   | var =>
-    obtain ⟨⟨i, hi⟩, rfl, rfl⟩ := subst_eq_var he hc he'
+    right
+    obtain ⟨⟨i, hi⟩, rfl, rfl⟩ := subst_eq_var he hvv he'
     exists ⟨i, hi⟩
     simp [Expr.Free.var]
   | fn k hk' hne hf ih =>
@@ -525,15 +525,15 @@ theorem eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
       have .fn _ hk := hv
       rw [subst_fn_eq_of_lt _ _ hk] at hf
       replace hf := free_of_free_in_subst hp (hp hk) hf
-      exfalso
-      exact hc m (.fn _ _ hne hf)
+      solve_by_elim
     · by_cases hd : n ≻[p] i
       · obtain ⟨hle, hlt, hinv⟩ := hmap.nests hi hd
-        obtain ⟨j, rfl, hj⟩ := ih (hp hi) (by simp [*, Program.subst])
-        have hij : j ≠ i := by
-          intro rfl
-          contradiction
-        exact ⟨j, rfl, .fn _ hi hij hj⟩
+        obtain hf' | ⟨j, rfl, hj⟩ := ih (hp hi) (by simp [*, Program.subst])
+        · exact Or.inl hf'
+        · have hij : j ≠ i := by
+            intro rfl
+            contradiction
+          exact Or.inr ⟨j, rfl, .fn _ hi hij hj⟩
       · obtain hi' := hmap.not_nests hi hd
         simp only [Fin.getElem_fin, hi', subst_fn_eq_of_lt v map hi] at hf
         replace hf := free_of_free_in_subst hp (hp hi) hf
@@ -541,42 +541,54 @@ theorem eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
         have hm : n ⊁[p] m := fun h => hd (.step _ _ hi hne hf h)
         have hlt := lt_size_of_free hp (hp hi) hf
         have hm' := hmap.not_nests hlt hm
-        refine ⟨⟨m, hlt⟩, by simp [hm'], .fn _ hi hne hf⟩
+        refine Or.inr ⟨⟨m, hlt⟩, by simp [hm'], .fn _ hi hne hf⟩
   | appL f e'' hf ih =>
     obtain ⟨f', e''', rfl, rfl⟩ := subst_eq_app hvv he'
     simp only [Expr.subst] at he'
     obtain ⟨rfl, rfl⟩ := he'
     replace .app _ _ hf he := he
-    obtain ⟨i, rfl, hf'⟩ := ih hf rfl
-    exact ⟨i, rfl, .appL _ _ hf'⟩
+    obtain hf' | ⟨i, rfl, hf'⟩ := ih hf rfl
+    · exact Or.inl hf'
+    · exact Or.inr ⟨i, rfl, .appL _ _ hf'⟩
   | appR f e'' hf ih =>
     obtain ⟨f', e''', rfl, rfl⟩ := subst_eq_app hvv he'
     simp only [Expr.subst] at he'
     obtain ⟨rfl, rfl⟩ := he'
     replace .app _ _ hf he := he
-    obtain ⟨i, rfl, hf'⟩ := ih he rfl
-    exact ⟨i, rfl, .appR _ _ hf'⟩
+    obtain hf' | ⟨i, rfl, hf'⟩ := ih he rfl
+    · exact Or.inl hf'
+    · exact Or.inr ⟨i, rfl, .appR _ _ hf'⟩
   | condC c et ef hf ih =>
     obtain ⟨c', et', ef', rfl, rfl, rfl⟩ := subst_eq_cond hvv he'
     simp only [Expr.subst] at he'
     obtain ⟨rfl, rfl, rfl⟩ := he'
     have .cond _ _ _ hc het hef := he
-    obtain ⟨i, rfl, hf'⟩ := ih hc rfl
-    exact ⟨i, rfl, .condC _ _ _ hf'⟩
+    obtain hf' | ⟨i, rfl, hf'⟩ := ih hc rfl
+    · exact Or.inl hf'
+    · exact Or.inr ⟨i, rfl, .condC _ _ _ hf'⟩
   | condT c et ef hf ih =>
     obtain ⟨c', et', ef', rfl, rfl, rfl⟩ := subst_eq_cond hvv he'
     simp only [Expr.subst] at he'
     obtain ⟨rfl, rfl, rfl⟩ := he'
     have .cond _ _ _ hc het hef := he
-    obtain ⟨i, rfl, hf'⟩ := ih het rfl
-    exact ⟨i, rfl, .condT _ _ _ hf'⟩
+    obtain hf' | ⟨i, rfl, hf'⟩ := ih het rfl
+    · exact Or.inl hf'
+    · exact Or.inr ⟨i, rfl, .condT _ _ _ hf'⟩
   | condF c et ef hf ih =>
     obtain ⟨c', et', ef', rfl, rfl, rfl⟩ := subst_eq_cond hvv he'
     simp only [Expr.subst] at he'
     obtain ⟨rfl, rfl, rfl⟩ := he'
     have .cond _ _ _ hc het hef := he
-    obtain ⟨i, rfl, hf'⟩ := ih hef rfl
-    exact ⟨i, rfl, .condF _ _ _ hf'⟩
+    obtain hf' | ⟨i, rfl, hf'⟩ := ih hef rfl
+    · exact Or.inl hf'
+    · exact Or.inr ⟨i, rfl, .condF _ _ _ hf'⟩
+
+theorem eq_map_of_free_in_subst_of_closed {p : Program} {e v : Expr} {m n : Nat}
+    {map : LabelMap p} (hmap : map.Valid n) (hp : p.ValidRefs)
+    (he : e.ValidRefs p) (hv : v.ValidRefs p) (hc : v.Closed p)
+    (hvv : v.Value) (hf : (e.subst map n v).Free (p.subst map n v) m) :
+    ∃ i : Fin p.size, m = map.fwd[i] ∧ e.Free p i :=
+  (free_or_eq_map_of_free_in_subst hmap hp he hv hvv hf).resolve_left (hc m)
 
 theorem nests_of_nests_in_subst {p : Program} {m n k : Nat} {v : Expr}
     {map : LabelMap p} (hk : k < p.size) (hp : p.ValidRefs)
@@ -603,11 +615,12 @@ theorem nests_of_nests_in_subst {p : Program} {m n k : Nat} {v : Expr}
     · refine Nests.step _ _ hk hne ?_ ih
       exact hf
 
-theorem nests_of_nests_map_in_subst {p : Program} {m n k : Nat} {v : Expr}
-    {map : LabelMap p} (hk : k < p.size) (hmap : map.Valid n) (hp : p.ValidRefs)
-    (hv : v.ValidRefs p) (hc : v.Closed p) (hvv : v.Value)
+theorem nestsEq_or_nests_of_nests_map_in_subst {p : Program} {m n k : Nat}
+    {v : Expr} {map : LabelMap p} (hk : k < p.size) (hmap : map.Valid n)
+    (hp : p.ValidRefs) (hv : v.ValidRefs p) (hvv : v.Value)
     (h : m ≻[p.subst map n v] map.fwd[k]) :
-    ∃ i : Fin p.size, m = map.fwd[i] ∧ i ≻[p] k := by
+    (∃ l, v.Free p l ∧ m ≽[p] l) ∨
+      ∃ i : Fin p.size, m = map.fwd[i] ∧ i ≻[p] k := by
   generalize hp' : p.subst map n v = p', hleq : map.fwd[k] = l at h
   induction h generalizing k with
   | free k' hk' hne hf' =>
@@ -615,59 +628,66 @@ theorem nests_of_nests_map_in_subst {p : Program} {m n k : Nat} {v : Expr}
     · subst p' k'
       obtain ⟨hle, hlt, hinv⟩ := hmap.nests hk hnk
       simp only [subst_fn_eq_of_ge, Fin.getElem_fin, hle, hinv] at hf'
-      obtain ⟨i, heq, hf⟩ :=
-        eq_map_of_free_in_subst hmap hp (hp _) hv hc hvv hf'
-      refine ⟨i, heq, ?_⟩
-      have : i ≠ k := by
-        intro h
-        subst k
-        contradiction
-      constructor <;> assumption
+      obtain hf | ⟨i, heq, hf⟩ :=
+        free_or_eq_map_of_free_in_subst hmap hp (hp _) hv hvv hf'
+      · exact Or.inl ⟨m, hf, .refl (lt_size_of_free hp hv hf)⟩
+      · refine Or.inr ⟨i, heq, ?_⟩
+        have : i ≠ k := by
+          intro h
+          subst k
+          contradiction
+        constructor <;> assumption
     · subst p' k'
       simp only [hmap.not_nests hk hnk] at *
       simp only [subst_fn_eq_of_lt, hk] at hf'
       have hf := free_of_free_in_subst hp (hp hk) hf'
       have hm := lt_size_of_free hp (hp hk) hf
       have hnm : n ⊁[p] m := fun h => hnk (Nests.step _ _ _ hne hf h)
-      refine ⟨⟨m, hm⟩, (hmap.not_nests hm hnm).symm, ?_⟩
+      refine Or.inr ⟨⟨m, hm⟩, (hmap.not_nests hm hnm).symm, ?_⟩
       constructor <;> assumption
-  | step l' k' hk' hne hf' h ih =>
+  | step l' k' hk' hne hf' h' ih =>
     by_cases hnk : n ≻[p] k
     · subst p' k'
       obtain ⟨hle, hlt, hinv⟩ := hmap.nests hk hnk
       simp only [subst_fn_eq_of_ge, Fin.getElem_fin, hle, hinv] at hf'
-      obtain ⟨l, heq, hf⟩ :=
-        eq_map_of_free_in_subst hmap hp (hp _) hv hc hvv hf'
-      obtain ⟨i, heq', hil⟩ := ih _ heq.symm
-      refine ⟨i, heq', ?_⟩
-      have : l ≠ k := by
-        intro h
-        subst k
-        contradiction
-      apply Nests.step <;> assumption
+      obtain hf | ⟨l, heq, hf⟩ :=
+        free_or_eq_map_of_free_in_subst hmap hp (hp _) hv hvv hf'
+      · have hl' := lt_size_of_free hp hv hf
+        have ⟨hm, h⟩ := nests_of_nests_in_subst hl' hp h'
+        exact Or.inl ⟨l', hf, .nests _ h⟩
+      · obtain hf'' | ⟨i, heq', hil⟩ := ih _ heq.symm
+        · exact Or.inl hf''
+        · refine Or.inr ⟨i, heq', ?_⟩
+          have : l ≠ k := by
+            intro h
+            subst k
+            contradiction
+          apply Nests.step <;> assumption
     · subst p' k'
       simp only [hmap.not_nests hk hnk] at *
       simp only [subst_fn_eq_of_lt, hk] at hf'
       have hf := free_of_free_in_subst hp (hp hk) hf'
       have hl := lt_size_of_free hp (hp hk) hf
-      obtain ⟨hm, hml⟩ := nests_of_nests_in_subst hl hp h
+      obtain ⟨hm, hml⟩ := nests_of_nests_in_subst hl hp h'
       have hlk : l' ≻[p] k := by constructor <;> assumption
       have hnl : n ⊁[p] l' := fun h => hnk (nests_trans h hlk)
       have hnm : n ⊁[p] m := fun h => hnl (nests_trans h hml)
-      exact ⟨⟨m, hm⟩, (hmap.not_nests hm hnm).symm, nests_trans hml hlk⟩
+      exact Or.inr ⟨⟨m, hm⟩, (hmap.not_nests hm hnm).symm, nests_trans hml hlk⟩
 
 theorem subst_wf  {p : Program} {n : Nat} {v : Expr} {map : LabelMap p}
-    (hmap : map.Valid n) (hp : p.ValidRefs) (hv : v.ValidRefs p)
-    (hc : v.Closed p) (hvv : v.Value) (hwf : p.WF) : (p.subst map n v).WF := by
+    (hmap : map.Valid n) (hp : p.ValidRefs) (hv : v.ValidRefs p) (hvv : v.Value)
+    (hwf : p.WF) : (p.subst map n v).WF := by
   intro m h
   by_cases hm : m < p.size
   · obtain ⟨-, h'⟩ := nests_of_nests_in_subst hm hp h
     exact hwf m h'
   · simp only [Nat.not_lt] at hm
     have hp' : (p.subst map n v).ValidRefs := subst_validRefs hmap hp hv
-    have hm' := lt_size_of_nests hp' h
+    have hm' := lt_size_left_of_nests hp' h
     obtain ⟨⟨i, hi⟩, rfl⟩ := hmap.eq_map_of_ge hm hm'
-    obtain ⟨⟨j, hj⟩, heq, h'⟩ :=
-      nests_of_nests_map_in_subst hi hmap hp hv hc hvv h
-    simp only [hmap.fwd_inj hi hj heq] at h'
-    exact hwf j h'
+    obtain ⟨l, hf, hl⟩ | ⟨⟨j, hj⟩, heq, h'⟩ :=
+      nestsEq_or_nests_of_nests_map_in_subst hi hmap hp hv hvv h
+    · have := lt_size_left_of_nestsEq hp hl
+      omega
+    · simp only [hmap.fwd_inj hi hj heq] at h'
+      exact hwf j h'

@@ -30,6 +30,14 @@ inductive Nests (p : Program) (n : Nat) : Nat → Prop where
 notation:40 n:41 " ≻[" p:min "] " m:41 => Nests p n m
 notation:40 n:41 " ⊁[" p:min "] " m:41 => ¬n ≻[p] m
 
+/-- The reflexive closure of the nesting relation. -/
+inductive NestsEq (p : Program) (n : Nat) : Nat → Prop where
+  | refl (_ : n < p.size) : NestsEq p n n
+  | nests (m : Nat) : Nests p n m → NestsEq p n m
+
+notation:40 n:41 " ≽[" p:min "] " m:41 => NestsEq p n m
+notation:40 n:41 " ⋡[" p:min "] " m:41 => ¬n ≽[p] m
+
 /-- An expression is closed if it has no free variables. -/
 def Expr.Closed (p : Program) (e : Expr) : Prop := ∀ n, ¬e.Free p n
 
@@ -86,16 +94,21 @@ theorem lt_size_of_free {p : Program} {e : Expr} {n : Nat} (hp : p.ValidRefs)
     (he : e.ValidRefs p) (hf : e.Free p n) : n < p.size := by
   induction hf with cases he <;> apply_rules
 
-theorem lt_size_of_nests {p : Program} {m n : Nat} (hp : p.ValidRefs)
+theorem lt_size_left_of_nests {p : Program} {m n : Nat} (hp : p.ValidRefs)
     (h : m ≻[p] n) : m < p.size := by
   induction h with apply_rules [lt_size_of_free]
 
-theorem Nests.lt {p : Program} {m n : Nat} : n ≻[p] m → m < p.size
-  | free _ hm _ _ => hm
-  | step _ _ hm _ _ _ => hm
+theorem lt_size_right_of_nests {p : Program} {m n : Nat} : n ≻[p] m → m < p.size
+  | .free _ hm _ _ => hm
+  | .step _ _ hm _ _ _ => hm
+
+theorem lt_size_left_of_nestsEq {p : Program} {m n : Nat} (hp : p.ValidRefs) :
+    m ≽[p] n → m < p.size
+  | .refl h => h
+  | .nests _ h => lt_size_left_of_nests hp h
 
 theorem nests_self {p : Program} {n : Nat} :
-    (h : n ≻[p] n) → ∃ m ≠ n, (p.fn[n]'h.lt).Free p m
+    (h : n ≻[p] n) → ∃ m ≠ n, (p.fn[n]'(lt_size_right_of_nests h)).Free p m
   | .free _ _ hne _ => nomatch hne
   | .step k _ _ hne hf _ => ⟨k, hne, hf⟩
 
