@@ -33,6 +33,9 @@ notation:40 n:41 " ⊁[" p:min "] " m:41 => ¬n ≻[p] m
 /-- An expression is closed if it has no free variables. -/
 def Expr.Closed (p : Program) (e : Expr) : Prop := ∀ n, ¬e.Free p n
 
+/-- A program is well-formed if no function nests itself. -/
+def Program.WF (p : Program) : Prop := ∀ n, n ⊁[p] n
+
 /--
 Free variables of a computation.
 
@@ -83,6 +86,10 @@ theorem lt_size_of_free {p : Program} {e : Expr} {n : Nat} (hp : p.ValidRefs)
     (he : e.ValidRefs p) (hf : e.Free p n) : n < p.size := by
   induction hf with cases he <;> apply_rules
 
+theorem lt_size_of_nests {p : Program} {m n : Nat} (hp : p.ValidRefs)
+    (h : m ≻[p] n) : m < p.size := by
+  induction h with apply_rules [lt_size_of_free]
+
 theorem Nests.lt {p : Program} {m n : Nat} : n ≻[p] m → m < p.size
   | free _ hm _ _ => hm
   | step _ _ hm _ _ _ => hm
@@ -91,3 +98,7 @@ theorem nests_self {p : Program} {n : Nat} :
     (h : n ≻[p] n) → ∃ m ≠ n, (p.fn[n]'h.lt).Free p m
   | .free _ _ hne _ => nomatch hne
   | .step k _ _ hne hf _ => ⟨k, hne, hf⟩
+
+theorem nests_trans {p : Program} {m n k : Nat} (h : m ≻[p] n) (h' : n ≻[p] k) :
+    m ≻[p] k := by
+  induction h' with apply Nests.step <;> assumption
