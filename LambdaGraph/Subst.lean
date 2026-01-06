@@ -43,6 +43,144 @@ noncomputable def Expr.subst {p : Program} (e : Expr) (map : LabelMap p)
   | cond c et ef => (c.subst map n v).cond (et.subst map n v) (ef.subst map n v)
 
 /--
+A map specifying how variables should be substituted.
+
+Variables that should remain untouched are simply mapped to themselves.
+-/
+abbrev VarMap (n : Nat) := Vector Expr n
+
+/-- Updates the map to map a given variable to a variable with a fresh label. -/
+abbrev VarMap.update {n : Nat} (vm : VarMap n) (m : Nat)
+    (h : m < n := by get_elem_tactic) : VarMap (n + 1) :=
+  vm.set m (.var n) |>.push (.var n)
+
+/-- Extends the map with identity mappings for programs of a larger size. -/
+def VarMap.extend {n n' : Nat} (v : VarMap n) : VarMap n' :=
+  Vector.ofFn (fun m => if _ : ↑m < n then v[↑m] else .var ↑m)
+
+/--
+The typing predicate for variable maps.
+
+For a variable map to be well-typed, each expression substituted for a variable
+must have the variable's declared type.
+-/
+def VarMap.Types (p : Program) (vm : VarMap p.size) : Prop :=
+  ∀ i (_ : i < p.size), p ⊢ vm[i] : p.ty[i]
+
+/--
+A map specifying how function references should be substituted.
+
+Function labels for which no new mapping exists yet are mapped to none, while
+functions introduced during substitution are mapped to themselves. This
+distinction is necessary to support the termination proof for substitution.
+-/
+abbrev FunMap (n : Nat) := Vector (Option Nat) n
+
+/-- Updates the map to map a given function to a function with a fresh label. -/
+abbrev FunMap.update {n : Nat} (fm : FunMap n) (m : Nat)
+    (h : m < n := by get_elem_tactic) : FunMap (n + 1) :=
+  fm.set m (some n) |>.push (some n)
+
+/-- Counts the number of function labels that might still be remapped. -/
+def FunMap.unmapped {n : Nat} (fm : FunMap n) : Nat :=
+  fm.countP (· = none)
+
+/--
+The typing predicate for function maps.
+
+For a function map to be well-typed, replacement functions must have the same
+type as their original.
+-/
+def FunMap.Types (p : Program) (fm : FunMap p.size) : Prop :=
+  ∀ i (_ : i < p.size) m, fm[i] = some m → ∃ (_ : m < p.size), p.ty[i] = p.ty[m]
+
+/-- The result of a substitution. -/
+structure SubstResult (p : Program) (fm : FunMap p.size) : Type where
+  program : Program
+  expr : Expr
+  funMap : FunMap program.size
+  size_ge : p.size ≤ program.size
+  unmapped_le : funMap.unmapped ≤ fm.unmapped
+
+open Classical in
+/--
+Makes substitutions in an expression according to the given maps.
+
+The expression may include references to functions in which a substitution
+variable occurs free. For these functions, new versions need to be added to the
+program, with their bodies substituted in the same way. In addition to the new
+program and expression, this function returns a new function map to allow
+reusing the newly created functions across subexpressions.
+-/
+noncomputable def Expr.subst' (p : Program) (e : Expr) (vm : VarMap p.size)
+    (fm : FunMap p.size) : SubstResult p fm :=
+  if ∀ n (_ : n < p.size), e.Free p n → vm[n] = .var n then
+    ⟨p, e, fm, Nat.le_refl _, Nat.le_refl _⟩
+  else
+    match e with
+    | var m => ⟨p, vm[m]?.getD (var m), fm, Nat.le_refl _, Nat.le_refl _⟩
+    | fn m =>
+      if _ : m < p.size then
+        match _ : fm[m] with
+        | none =>
+          let m' := p.size
+          let vm₁ := vm.update m
+          let fm₁ := fm.update m
+          let dummy := (fn m').app (var m') -- temporary body that is always well-typed
+          let p₁ := p.push dummy p.ty[m]
+          have hsize₁ : p.size ≤ p₁.size := by simp [p₁]
+          have hum₁ : fm₁.unmapped < fm.unmapped := by
+            simp only [FunMap.unmapped, FunMap.update, reduceCtorEq,
+              decide_false, Bool.false_eq_true, not_false_eq_true,
+              Vector.countP_push_of_neg, Vector.countP_set, decide_true,
+              ↓reduceIte, Nat.add_zero, fm₁, *]
+            have : 0 < Vector.countP (fun x => decide (x = none)) fm :=
+              Vector.countP_pos_iff.mpr ⟨none, Vector.mem_of_getElem ‹fm[m] = none›, rfl⟩
+            omega
+          let ⟨p₂, f', fm₂, hsize₂, hum₂⟩ := p.fn[m].subst' p₁ vm₁ fm₁
+          let p₃ := p₂.setBody m' f'
+          let e' := fn m'
+          have hsize : p.size ≤ p₂.size := by omega
+          have hum : fm₂.unmapped ≤ fm.unmapped := by omega
+          ⟨p₃, e', fm₂, hsize, hum⟩
+        | some m' =>
+          ⟨p, fn m', fm, Nat.le_refl _, Nat.le_refl _⟩
+      else
+        ⟨p, fn m, fm, Nat.le_refl _, Nat.le_refl _⟩
+    | app f e =>
+      let ⟨p₁, f', fm₁, hsize₁, hum₁⟩ := f.subst' p vm fm
+      let ⟨p₂, e', fm₂, hsize₂, hum₂⟩ := e.subst' p₁ vm.extend fm₁
+      ⟨p₂, f'.app e', fm₂, by omega, by omega⟩
+    | bool b => ⟨p, bool b, fm, Nat.le_refl _, Nat.le_refl _⟩
+    | cond c et ef =>
+      let ⟨p₁, c', fm₁, hsize₁, hum₁⟩ := c.subst' p vm fm
+      let vm₁ := vm.extend
+      let ⟨p₂, et', fm₂, hsize₂, hum₂⟩ := et.subst' p₁ vm₁ fm₁
+      let ⟨p₃, ef', fm₃, hsize₃, hum₃⟩ := ef.subst' p₂ vm₁.extend fm₂
+      ⟨p₃, c'.cond et' ef', fm₃, by omega, by omega⟩
+termination_by (fm.unmapped, e)
+decreasing_by
+  · exact Prod.Lex.left p.fn[m] (fn m) hum₁
+  · refine Prod.Lex.right fm.unmapped ?_
+    simp_wf
+    omega
+  · apply Prod.Lex.right'
+    · assumption
+    · simp_wf
+      omega
+  · refine Prod.Lex.right fm.unmapped ?_
+    simp_wf
+    omega
+  · apply Prod.Lex.right'
+    · assumption
+    · simp_wf
+      omega
+  · apply Prod.Lex.right'
+    · apply Nat.le_trans <;> assumption
+    · simp_wf
+      omega
+
+/--
 Substitutes a value for a variable in a program.
 
 This creates a new version of each function that depends on `n`, as specified by
@@ -66,6 +204,14 @@ noncomputable def Computation.subst (p : Computation) (n : Nat) (v : Expr) :
     Computation :=
   let map := p.labelMap n
   ⟨p.toProgram.subst map n v, p.expr.subst map n v⟩
+
+/-- Substitutes a value for a variable in a computation. -/
+noncomputable def Computation.subst' (p : Computation) (n : Nat) (v : Expr) :
+    Computation :=
+  let vm := (Vector.ofFn fun i => .var ↑i).setIfInBounds n v
+  let fm := Vector.ofFn fun i => ↑i
+  let ⟨p', e', _, _, _⟩ := p.expr.subst' p.toProgram vm fm
+  ⟨p', e'⟩
 
 theorem program_subst_size_le {p : Program} {v : Expr} {n : Nat}
     {map : LabelMap p} : p.size ≤ (p.subst map n v).size := by

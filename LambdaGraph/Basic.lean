@@ -31,6 +31,15 @@ structure Program where
   /-- Maps each label to the type of the corresponding function's argument. -/
   ty : Vector Ty size
 
+/-- Extends a program by a new function with a given body and argument type. -/
+abbrev Program.push (p : Program) (b : Expr) (t : Ty) : Program :=
+  ⟨_, p.fn.push b, p.ty.push t⟩
+
+/-- Sets a function body in a program to a new expression. -/
+abbrev Program.setBody (p : Program) (i : Nat) (b : Expr)
+    (hi : i < p.size := by get_elem_tactic) : Program :=
+  { p with fn := p.fn.set i b }
+
 /-- A computation consists of a program and an expression to be evaluated. -/
 @[pp_using_anonymous_constructor]
 structure Computation extends Program where
