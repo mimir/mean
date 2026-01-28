@@ -830,7 +830,8 @@ theorem subst_wf  {p : Program} {n : Nat} {v : Expr} {map : LabelMap p}
   · simp only [Nat.not_lt] at hm
     have hp' : (p.subst map n v).ValidRefs := subst_validRefs hmap hp hv
     have hm' := lt_size_left_of_nests hp' h
-    obtain ⟨⟨i, hi⟩, rfl⟩ := hmap.eq_map_of_ge hm hm'
+    obtain ⟨⟨i, hi⟩, heq⟩ := hmap.eq_map_of_ge hm hm'
+    rw [heq] at h
     obtain ⟨l, hf, hl⟩ | ⟨⟨j, hj⟩, heq, h'⟩ :=
       nestsEq_or_nests_of_nests_map_in_subst hi hmap hp hv hvv h
     · have := lt_size_left_of_nestsEq hp hl
