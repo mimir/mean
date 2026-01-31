@@ -117,3 +117,33 @@ def Program.ValidRefs (p : Program) : Prop :=
 
 theorem Program.Types.validRefs {p : Program} (ht : ⊢ p) : p.ValidRefs :=
   fun hi => (ht hi).validRefs
+
+theorem Expr.types_in_push_of_types {p : Program} {e b : Expr} {t t' : Ty}
+    (h : p ⊢ e : t) : p.push b t' ⊢ e : t := by
+  induction h with try solve_by_elim
+  | var n hn =>
+    have hn' : n < (p.push b t').size := by lia
+    have : p.ty[n] = (p.push b t').ty[n] := by
+      simp [Program.push, hn]
+    rw [this]
+    constructor
+  | fn n hn =>
+    have hn' : n < (p.push b t').size := by lia
+    have : p.ty[n] = (p.push b t').ty[n] := by
+      simp [Program.push, hn]
+    rw [this]
+    constructor
+
+theorem Expr.types_in_setBody_of_types {p : Program} {e b : Expr} {t : Ty}
+    {i : Nat} (hi : i < p.size) (h : p ⊢ e : t) : p.setBody i b ⊢ e : t := by
+  induction h with constructor <;> assumption
+
+theorem Program.types_push {p : Program} {b : Expr} {t' : Ty} (hp : ⊢ p)
+    (hf : p.push b t' ⊢ b : .bot) : ⊢ p.push b t' := by
+  intro i hi
+  by_cases i = p.size
+  · simp [*]
+  · replace hi : i < p.size := by lia
+    apply Expr.types_in_push_of_types
+    simp [push, *]
+    exact hp hi

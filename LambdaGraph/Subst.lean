@@ -838,3 +838,249 @@ theorem subst_wf  {p : Program} {n : Nat} {v : Expr} {map : LabelMap p}
       omega
     · simp only [hmap.fwd_inj hi hj heq] at h'
       exact hwf j h'
+
+theorem Program.subst_ty_eq {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
+    let ⟨p', _, fm', hsize, _⟩ := e.subst' p vm fm
+    p'.ty[n] = p.ty[n] := by
+  fun_induction Expr.subst' <;> dsimp only at *
+  next p vm fm m hm f m' vm₁ fm₁ dummy p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
+      p₃ f'' hsize hum h ih =>
+    have hp₂ : p₂ = (p.fn[m].subst' p₁ vm₁ fm₁).program := by grind
+    subst p₂
+    grind
+  next p vm fm f e p₁ f' fm₁ hsize₁ hum₁ hs₁ p₂ e' fm₂ hsize₂ hum₂ hs₂ h ihf ihe =>
+    have hp₁ : p₁ = (f.subst' p vm fm).program := by grind
+    have hp₂ : p₂ = (e.subst' p₁ vm.extend fm₁).program := by grind
+    subst p₁ p₂
+    grind
+  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
+      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
+    have hp₁ : p₁ = (c.subst' p vm fm).program := by grind
+    have hp₂ : p₂ = (et.subst' p₁ vm.extend fm₁).program := by grind
+    have hp₃ : p₃ = (ef.subst' p₂ vm₁.extend fm₂).program := by grind
+    subst p₁ p₂ p₃
+    grind
+
+theorem Program.subst_fn_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
+    let ⟨p', _, _, hsize, _⟩ := (e.subst' p vm fm)
+    p'.fn[n] = p.fn[n] := by
+  fun_induction Expr.subst' <;>
+    first | grind
+          | dsimp only at *
+  next p vm fm m hm f m' vm₁ fm₁ dummy p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
+      p₃ f'' hsize hum h ih =>
+    have hp₂ : p₂ = (p.fn[m].subst' p₁ vm₁ fm₁).program := by grind
+    subst p₂
+    grind
+  next p vm fm f e p₁ f' fm₁ hsize₁ hum₁ hs₁ p₂ e' fm₂ hsize₂ hum₂ hs₂ h ihf ihe =>
+    have hp₁ : p₁ = (f.subst' p vm fm).program := by grind
+    have hp₂ : p₂ = (e.subst' p₁ vm.extend fm₁).program := by grind
+    subst p₁ p₂
+    grind
+  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
+      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
+    have hp₁ : p₁ = (c.subst' p vm fm).program := by grind
+    have hp₂ : p₂ = (et.subst' p₁ vm.extend fm₁).program := by grind
+    have hp₃ : p₃ = (ef.subst' p₂ vm₁.extend fm₂).program := by grind
+    subst p₁ p₂ p₃
+    grind
+
+theorem Expr.types_in_subst_of_types {p : Program} {e₁ e₂ : Expr} {t : Ty}
+    {vm : VarMap p.size} {fm : FunMap p.size} (ht : p ⊢ e₁ : t) :
+    (e₂.subst' p vm fm).program ⊢ e₁ : t := by
+  induction ht with
+    first | constructor <;> assumption
+          | rw [← Program.subst_ty_eq]; constructor
+
+namespace VarMap
+
+theorem update_types {p : Program} {vm : VarMap p.size} {b : Expr} {m : Nat}
+    (hm : m < p.size) (h : vm.Types p) :
+    (vm.update m hm).Types (p.push b p.ty[m]) := by
+  intro i hi
+  by_cases i = p.size
+  · simp only [Vector.getElem_push_eq, *]
+    have : p.ty[m] = (p.push b p.ty[m]).ty[p.size] := by simp
+    conv => arg 3; rw [this]
+    constructor
+  · replace hi : i < p.size := by lia
+    simp only [Vector.getElem_push_lt, hi]
+    by_cases m = i
+    · subst i
+      simp only [Vector.getElem_set_self]
+      have : p.ty[m] = (p.push b p.ty[m]).ty[p.size] := by simp
+      conv => arg 3; rw [this]
+      constructor
+    · rw [Vector.getElem_set_ne _ _ ‹m ≠ i›]
+      simpa [*] using Expr.types_in_push_of_types (h i hi)
+
+theorem extend_types {p : Program} (e : Expr) {vm : VarMap p.size}
+    (fm : FunMap p.size) (hvm : vm.Types p) :
+    vm.extend.Types (e.subst' p vm fm).program := by
+  intro i hi
+  simp only [VarMap.extend, Fin.getElem_fin, Vector.getElem_ofFn]
+  split
+  · apply Expr.types_in_subst_of_types
+    rw [Program.subst_ty_eq]
+    apply hvm
+    assumption
+  · constructor
+
+end VarMap
+
+namespace FunMap
+
+@[simp]
+theorem getElem_update_size {n : Nat} {fm : FunMap n} {m : Nat} (hm : m < n) :
+    (fm.update m hm)[n] = some n := by simp
+
+@[simp]
+theorem getElem_update_eq {n : Nat} {fm : FunMap n} {m : Nat} (hm : m < n) :
+    (fm.update m)[m] = some n := by grind
+
+@[simp]
+theorem getElem_update_ne {n : Nat} {fm : FunMap n} {m i : Nat} (hm : m < n)
+    (hi : i < n) (hne : i ≠ m) : (fm.update m hm)[i] = fm[i] := by grind
+
+theorem update_types {p : Program} {fm : FunMap p.size} {b : Expr} {m : Nat}
+    (hm : m < p.size) (h : fm.Types p) :
+    (fm.update m hm).Types (p.push b p.ty[m]) := by
+  intro i hi m' heq
+  by_cases i = p.size
+  · grind
+  · replace hi : i < p.size := by lia
+    simp [*]
+    by_cases i = m
+    · grind [getElem_update_eq]
+    · simp only [ne_eq, not_false_eq_true, getElem_update_ne, *] at heq
+      obtain ⟨_, _⟩ := h i hi _ heq
+      grind
+
+theorem subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} (hfm : fm.Types p) :
+    let ⟨p', _, fm', _, _⟩ := e.subst' p vm fm
+    fm'.Types p' := by
+  dsimp only
+  fun_induction Expr.subst' <;>
+    first | grind
+          | dsimp only at *
+  next p vm fm m hm f m' vm₁ fm₁ dummy p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
+      p₃ f'' hsize hum h ih =>
+    have hp₂ : p₂ = (p.fn[m].subst' p₁ vm₁ fm₁).program := by grind
+    subst p₂
+    have hfm₂ : fm₂ = (p.fn[m].subst' p₁ vm₁ fm₁).funMap := by grind
+    subst fm₂
+    apply ih
+    intro i hi k hk
+    simp [p₁]
+    by_cases i = p.size
+    · subst i
+      simp only [update, fm₁] at hk
+      grind
+    · simp only [p₁] at hi
+      replace hi : i < p.size := by lia
+      by_cases i = m
+      · grind [getElem_update_eq]
+      · simp [fm₁, *] at hk
+        rw [getElem_update_ne _ hi ‹i ≠ m›] at hk
+        obtain ⟨_, _⟩ := hfm i hi _ hk
+        grind
+
+end FunMap
+
+namespace Expr
+
+theorem subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
+    {fm : FunMap p.size} (ht : p ⊢ e : t) (hvm : vm.Types p) (hfm : fm.Types p) :
+    let ⟨p', e', _, _, _⟩ := e.subst' p vm fm
+    p' ⊢ e' : t := by
+  fun_induction subst' generalizing t <;> dsimp only at *
+  next => exact ht
+  next p vm fm m h =>
+    by_cases hm : m < p.size
+    · simp only [hm, getElem?_pos, Option.getD_some]
+      have .var _ _ := ht
+      apply hvm
+    · simp [hm, ht]
+  next p vm fm m hm f m' vm₁ fm₁ dummy p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
+      p₃ f'' hsize hum h ih =>
+    have .fn _ _ := ht
+    have hp₂ : p₂ = (p.fn[m].subst' p₁ vm₁ fm₁).program := by grind
+    subst hp₂
+    have : p.ty[m] = p₃.ty[p.size] := by grind [Program.subst_ty_eq]
+    rw [this]
+    constructor
+  next p vm fm m hm m' hm' h =>
+    have .fn _ _ := ht
+    obtain ⟨_, heq⟩ := hfm _ ‹m < p.size› m' hm'
+    rw [heq]
+    constructor
+  next => exact ht
+  next =>
+    have .app _ _ t' htf hte := ht
+    apply Types.app _ _ t' <;>
+      grind [types_in_subst_of_types, VarMap.extend_types, FunMap.subst_types]
+  next => exact ht
+  next =>
+    have .cond _ _ _ _ htc htet htef := ht
+    constructor <;>
+      grind [types_in_subst_of_types, VarMap.extend_types, FunMap.subst_types]
+
+end Expr
+
+namespace Program
+
+theorem subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} (ht : ⊢ p) (hvm : vm.Types p) (hfm : fm.Types p) :
+    ⊢ (e.subst' p vm fm).program := by
+  fun_induction Expr.subst' <;>
+    first | grind [VarMap.extend_types, FunMap.subst_types]
+          | dsimp only at *
+  next p vm fm m hm f m' vm₁ fm₁ dummy p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
+      p₃ f'' hsize hum h ih =>
+    have ht₁ : ⊢ p₁ := by
+      apply types_push ht
+      constructor
+      · constructor
+        lia
+      · constructor
+    have hvm₁ : vm₁.Types p₁ := VarMap.update_types hm hvm
+    have hfm₁ : fm₁.Types p₁ := FunMap.update_types hm hfm
+    have hp₂ : p₂ = (p.fn[m].subst' p₁ vm₁ fm₁).program := by grind
+    subst p₂
+    have ht₂ : ⊢ _ := ih ht₁ hvm₁ hfm₁
+    intro i hi
+    simp only [p₃]
+    by_cases m' = i
+    · subst i
+      have hf' : f' = (p.fn[m].subst' p₁ vm₁ fm₁).expr := by grind
+      subst f'
+      apply Expr.types_in_setBody_of_types
+      simp only [Vector.getElem_set_self]
+      apply Expr.subst_types
+      · exact Expr.types_in_push_of_types (ht hm)
+      · exact hvm₁
+      · exact hfm₁
+    · rw [Vector.getElem_set_ne _ _ ‹m' ≠ i›]
+      exact Expr.types_in_setBody_of_types _ (ht₂ hi)
+
+end Program
+
+namespace Computation
+
+theorem subst_types {c : Computation} {t : Ty} {n : Nat} {v : Expr}
+    (hn : n < c.size) (ht : ⊢ c : t) (hv : c.toProgram ⊢ v : c.ty[n]) :
+    ⊢ c.subst' n v : t := by
+  refine ⟨Program.subst_types ht.program_types ?hvm ?hfm,
+          Expr.subst_types ht.expr_types ?hvm ?hfm⟩
+  · intro i hi
+    by_cases n = i
+    · simp_all
+    · rw [Vector.getElem_setIfInBounds_ne _ ‹n ≠ i›, Vector.getElem_ofFn]
+      constructor
+  · intro i hi m heq
+    grind
+
+end Computation
