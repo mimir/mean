@@ -38,6 +38,59 @@ inductive NestsEq (p : Program) (n : Nat) : Nat → Prop where
 notation:40 n:41 " ≽[" p:min "] " m:41 => NestsEq p n m
 notation:40 n:41 " ⋡[" p:min "] " m:41 => ¬n ≽[p] m
 
+/--
+Local variables of an expression are those that occur as a subexpression.
+
+Unlike with free variables, this definition does not follow function references.
+-/
+inductive Expr.LocalVar (n : Nat) : Expr → Prop where
+  | var : (var n).LocalVar n
+  | appL (f e : Expr) : f.LocalVar n → (f.app e).LocalVar n
+  | appR (f e : Expr) : e.LocalVar n → (f.app e).LocalVar n
+  | condC (c et ef : Expr) : c.LocalVar n → (c.cond et ef).LocalVar n
+  | condT (c et ef : Expr) : et.LocalVar n → (c.cond et ef).LocalVar n
+  | condF (c et ef : Expr) : ef.LocalVar n → (c.cond et ef).LocalVar n
+
+/-- Local functions of an expression are those that occur as a subexpression. -/
+inductive Expr.LocalFn (n : Nat) : Expr → Prop where
+  | fn : (fn n).LocalFn n
+  | appL (f e : Expr) : f.LocalFn n → (f.app e).LocalFn n
+  | appR (f e : Expr) : e.LocalFn n → (f.app e).LocalFn n
+  | condC (c et ef : Expr) : c.LocalFn n → (c.cond et ef).LocalFn n
+  | condT (c et ef : Expr) : et.LocalFn n → (c.cond et ef).LocalFn n
+  | condF (c et ef : Expr) : ef.LocalFn n → (c.cond et ef).LocalFn n
+
+/--
+The successor relation between functions.
+
+A function is a successor (in the CFG) of another function if it occurs in that
+function's body (loops are permitted).
+-/
+def Program.Succ (p : Program) (m n : Nat) :=
+  ∃ (_ : m < p.size), p.fn[m].LocalFn n
+
+notation:40 m:41 " ⟶[" p:min "] " n:41 => Program.Succ p m n
+
+/--
+A path from one function to another, in which the function `l` does not occur.
+
+Longer paths are constructed by prepending edges to the beginning, matching how
+the free variable relation can add extra function references on the “outside” of
+an expression.
+-/
+inductive Program.PathWithout (p : Program) (l : Nat) : Nat → Nat → Prop where
+  | refl n : l ≠ n → p.PathWithout l n n
+  | step m n k : l ≠ m → m ⟶[p] n → p.PathWithout l n k → p.PathWithout l m k
+
+notation:40 m:41 " ⟶[" p:min ", " l:min "]* " n:41 => Program.PathWithout p l m n
+
+/--
+A function `n` dominates `k` if no path from the start `m` to `k` can avoid `n`.
+
+This relation can also be read as post-dominance with end `k`.
+-/
+def Program.Dominates (p : Program) (m n k : Nat) : Prop := ¬m ⟶[p, n]* k
+
 /-- An expression is closed if it has no free variables. -/
 def Expr.Closed (p : Program) (e : Expr) : Prop := ∀ n, ¬e.Free p n
 
@@ -115,3 +168,144 @@ theorem nests_self {p : Program} {n : Nat} :
 theorem nests_trans {p : Program} {m n k : Nat} (h : m ≻[p] n) (h' : n ≻[p] k) :
     m ≻[p] k := by
   induction h' with apply Nests.step <;> assumption
+
+theorem Program.pathWithout_trans {p : Program} {m n k l : Nat}
+    (h : m ⟶[p, l]* n) (h' : n ⟶[p, l]* k) : m ⟶[p, l]* k := by
+  induction h with
+  | refl => assumption
+  | step m n o hne hs hp ih => constructor <;> apply_rules
+
+theorem Program.PathWithout.ne_start {p : Program} {m n k : Nat}
+    (h : p.PathWithout k m n) : k ≠ m := by
+  intro rfl
+  cases h <;> contradiction
+
+theorem Program.PathWithout.ne_end {p : Program} {m n k : Nat}
+    (h : p.PathWithout k m n) : k ≠ n := by
+  induction h <;> trivial
+
+theorem Program.eq_of_dominates_start {p : Program} {m n : Nat}
+    (h : p.Dominates m n m) : n = m := by
+  apply Decidable.byContradiction
+  intro hne
+  exact h (.refl _ hne)
+
+theorem Program.dominates_trans {p : Program} {m n k l : Nat}
+    (h : p.Dominates m n k) (h' : p.Dominates m k l) : p.Dominates m n l := by
+  intro hpml
+  induction hpml with
+  | refl m =>
+    obtain rfl := eq_of_dominates_start h'
+    obtain rfl := eq_of_dominates_start h
+    contradiction
+  | step m o l hnm hs hpol ih =>
+    by_cases hkm : k = m
+    · subst k
+      exact h (.refl _ hnm)
+    · apply ih
+      · intro hpok
+        exact h (.step _ _ _ hnm hs hpok)
+      · intro hpol
+        exact h' (.step _ _ _ hkm hs hpol)
+
+theorem Expr.free_of_localVar {p : Program} {e : Expr} {n : Nat}
+    (h : e.LocalVar n) : e.Free p n := by
+  induction h with
+    solve_by_elim [Free.var, Free.appL, Free.appR, Free.condC, Free.condT, Free.condF]
+
+theorem Expr.free_of_localFn_of_free {p : Program} {e : Expr} {m n : Nat}
+    (hm : m < p.size) (hne : n ≠ m) (hlf : e.LocalFn m)
+    (hf : p.fn[m].Free p n) : e.Free p n := by
+  open Free in
+  induction hlf with
+    solve_by_elim [var, appL, appR, condC, condT, condF]
+
+theorem Program.free_in_fn_of_succ {p : Program} {m n k : Nat} (hm : m < p.size)
+    (hn : n < p.size) (hne : k ≠ n) (hs : m ⟶[p] n) (hf : p.fn[n].Free p k) :
+    p.fn[m].Free p k :=
+  have ⟨_, hlf⟩ := hs
+  Expr.free_of_localFn_of_free hn hne hlf hf
+
+theorem Expr.free_iff {p : Program} {e : Expr} {n : Nat} :
+    e.Free p n ↔
+      e.LocalVar n ∨ ∃ (m k : Nat) (_ : k < p.size),
+        e.LocalFn m ∧ m ⟶[p, n]* k ∧ p.fn[k].LocalVar n := by
+  constructor
+  · intro h
+    induction h with
+    | var => left; constructor
+    | fn m hm hne hf ih =>
+      refine Or.inr ⟨m, ?_⟩
+      obtain hlv | ⟨k, l, hl, hlf, hp, hlv⟩ := ih
+      · exact ⟨m, hm, .fn, .refl _ hne, hlv⟩
+      · exact ⟨l, hl, .fn, .step _ _ _ hne ⟨hm, hlf⟩ hp, hlv⟩
+    | appL => grind [LocalVar.appL, LocalFn.appL]
+    | appR => grind [LocalVar.appR, LocalFn.appR]
+    | condC => grind [LocalVar.condC, LocalFn.condC]
+    | condT => grind [LocalVar.condT, LocalFn.condT]
+    | condF => grind [LocalVar.condF, LocalFn.condF]
+  · rintro (hlv | ⟨m, k, hk, hlf, hp, hlv⟩)
+    · exact free_of_localVar hlv
+    · have hf : p.fn[k].Free p n := free_of_localVar hlv
+      induction hp generalizing e with
+      | refl m hne => exact free_of_localFn_of_free hk hne hlf hf
+      | step m l k hne hs hp ih =>
+        obtain ⟨hm, hlf'⟩ := hs
+        apply free_of_localFn_of_free hm hne hlf (ih hk hlf' hlv hf)
+
+theorem Program.free_in_fn_iff {p : Program} {m n : Nat} (hm : m < p.size)
+    (hne : n ≠ m) : p.fn[m].Free p n ↔
+      ∃ (k : Nat) (_ : k < p.size),
+        p.fn[k].LocalVar n ∧ m ⟶[p, n]* k := by
+  constructor
+  · intro hf
+    obtain hlv | ⟨k, l, hl, hlf, hp, hlv⟩ := Expr.free_iff.mp hf
+    · exact ⟨m, hm, hlv, .refl _ hne⟩
+    · exact ⟨l, hl, hlv, .step _ _ _ hne ⟨hm, hlf⟩ hp⟩
+  · intro ⟨k, hk, hlv, hp⟩
+    cases hp with
+    | refl m => exact Expr.free_of_localVar hlv
+    | step m l k hne hs hp =>
+      obtain ⟨_, hlf⟩ := hs
+      exact Expr.free_iff.mpr <| Or.inr ⟨l, k, hk, hlf, hp, hlv⟩
+
+theorem Program.free_of_pathWithout_of_free {p : Program} {m n k : Nat}
+    (hm : m < p.size) (hk : k < p.size) (hp : m ⟶[p, n]* k)
+    (hf : p.fn[k].Free p n) : p.fn[m].Free p n := by
+  obtain ⟨l, hl, hlv, hp'⟩ := (free_in_fn_iff hk hp.ne_end).mp hf
+  apply (free_in_fn_iff hm hp.ne_start).mpr
+  exact ⟨l, hl, hlv, pathWithout_trans hp hp'⟩
+
+theorem Program.dominates_of_nests {p : Program} {m n k : Nat}
+    (hv : p.ValidRefs) (hwf : p.WF) (hmn : m ≻[p] n) (hnk : n ≻[p] k) :
+    p.Dominates m n k := by
+  induction hnk with
+  | free k hk hne hfk =>
+    intro hp
+    have hm := lt_size_left_of_nests hv hmn
+    have hfm := free_of_pathWithout_of_free hm hk hp hfk
+    have hnm : n ≻[p] m := by
+      constructor
+      · intro rfl
+        exact hwf _ hmn
+      · exact hfm
+    exact hwf _ (nests_trans hmn hnm)
+  | step l k hk hne hfk hnl ih =>
+    apply dominates_trans ih
+    intro hp
+    have hm := lt_size_left_of_nests hv hmn
+    have hfm := free_of_pathWithout_of_free hm hk hp hfk
+    have hlm : l ≻[p] m := by
+      constructor
+      · intro rfl
+        exact hwf _ (nests_trans hnl hmn)
+      · exact hfm
+    exact hwf _ (nests_trans hmn (nests_trans hnl hlm))
+
+theorem Program.dominates_of_nestsEq {p : Program} {m n k : Nat}
+    (hv : p.ValidRefs) (hwf : p.WF) (hmn : m ≽[p] n) (hnk : n ≽[p] k) :
+    p.Dominates m n k :=
+  match hmn, hnk with
+  | .refl _, _ => fun h => nomatch h.ne_start
+  | .nests _ _, .refl _ => fun h => nomatch h.ne_end
+  | .nests _ h₁, .nests _ h₂ => dominates_of_nests hv hwf h₁ h₂
