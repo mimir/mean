@@ -100,23 +100,142 @@ theorem value_types_bool {p : Program} {v : Expr} (h : p ⊢ v : .bool) :
   | .fn n => nomatch h
   | .bool b => by simp
 
-inductive Expr.ValidRefs (p : Program) : Expr → Prop where
-  | var (n : Nat) : n < p.size → (Expr.var n).ValidRefs p
-  | fn (n : Nat) : n < p.size → (Expr.fn n).ValidRefs p
-  | app (f e : Expr) : f.ValidRefs p → e.ValidRefs p → (f.app e).ValidRefs p
-  | bool (b : Bool) : (Expr.bool b).ValidRefs p
-  | cond (c et ef : Expr) : c.ValidRefs p → et.ValidRefs p → ef.ValidRefs p →
-    (c.cond et ef).ValidRefs p
+/-- A kind of reference, either a variable or a function. -/
+inductive RefKind where
+  | var
+  | fn
+
+/-- A reference (variable or function) occuring as a subexpression. -/
+inductive Expr.Local (n : Nat) : RefKind → Expr → Prop where
+  | var : (var n).Local n .var
+  | fn : (fn n).Local n .fn
+  | appL (r : RefKind) (f e : Expr) : f.Local n r → (f.app e).Local n r
+  | appR (r : RefKind) (f e : Expr) : e.Local n r → (f.app e).Local n r
+  | condC (r : RefKind) (c et ef : Expr) : c.Local n r → (c.cond et ef).Local n r
+  | condT (r : RefKind) (c et ef : Expr) : et.Local n r → (c.cond et ef).Local n r
+  | condF (r : RefKind) (c et ef : Expr) : ef.Local n r → (c.cond et ef).Local n r
+
+/-- A local variable in an expression. -/
+@[grind]
+def Expr.LocalVar (e : Expr) (n : Nat) : Prop := e.Local n .var
+
+/-- A local function reference in an expression. -/
+@[grind]
+def Expr.LocalFn (e : Expr) (n : Nat) : Prop := e.Local n .fn
+
+/-- All references in an expression are in bounds of a given program. -/
+def Expr.ValidRefs (e : Expr) (p : Program) : Prop :=
+  ∀ ⦃n : Nat⦄ ⦃r : RefKind⦄, e.Local n r → n < p.size
 
 theorem Expr.Types.validRefs {p : Program} {e : Expr} {t : Ty} (ht : p ⊢ e : t)
     : e.ValidRefs p := by
-  induction ht with constructor <;> assumption
+  intro n r hl
+  induction ht with cases hl <;> solve_by_elim
 
 def Program.ValidRefs (p : Program) : Prop :=
   ∀ {i} (_ : i < p.size), p.fn[i].ValidRefs p
 
 theorem Program.Types.validRefs {p : Program} (ht : ⊢ p) : p.ValidRefs :=
   fun hi => (ht hi).validRefs
+
+@[simp, grind =]
+theorem Expr.local_var_iff {m n : Nat} {r : RefKind} :
+    (var m).Local n r ↔ r = .var ∧ m = n := by
+  constructor
+  · intro h
+    have .var := h
+    simp
+  · intro ⟨hr, rfl⟩
+    subst hr
+    constructor
+
+@[simp, grind =]
+theorem Expr.local_fn_iff {m n : Nat} {r : RefKind} :
+    (fn m).Local n r ↔ r = .fn ∧ m = n := by
+  constructor
+  · intro h
+    have .fn := h
+    simp
+  · intro ⟨hr, rfl⟩
+    subst hr
+    constructor
+
+@[simp, grind =]
+theorem Expr.local_app_iff {f e : Expr} {n : Nat} {r : RefKind} :
+    (f.app e).Local n r ↔ f.Local n r ∨ e.Local n r := by
+  constructor
+  · intro h
+    cases h <;> solve_by_elim [Or.inl, Or.inr]
+  · rintro (hf | he) <;> solve_by_elim [Local.appL, Local.appR]
+
+@[simp, grind .]
+theorem Expr.not_local_bool {b : Bool} {n : Nat} {r : RefKind} :
+    ¬(bool b).Local n r := nofun
+
+@[simp, grind =]
+theorem Expr.local_cond_iff {c et ef : Expr} {n : Nat} {r : RefKind} :
+    (c.cond et ef).Local n r ↔ c.Local n r ∨ et.Local n r ∨ ef.Local n r := by
+  constructor
+  · intro h
+    cases h <;> solve_by_elim [Or.inl, Or.inr]
+  · rintro (hc | het | hef) <;>
+      solve_by_elim [Local.condC, Local.condT, Local.condF]
+
+@[simp, grind =]
+theorem Expr.validRefs_var_iff {p : Program} {n : Nat} :
+    (var n).ValidRefs p ↔ n < p.size := by
+  constructor <;> intro h
+  · solve_by_elim
+  · intro m r hl
+    have .var := hl
+    exact h
+
+@[simp, grind =]
+theorem Expr.validRefs_fn_iff {p : Program} {n : Nat} :
+    (fn n).ValidRefs p ↔ n < p.size := by
+  constructor <;> intro h
+  · solve_by_elim
+  · intro m r hl
+    have .fn := hl
+    exact h
+
+@[simp, grind =]
+theorem Expr.validRefs_app_iff {p : Program} {f e : Expr} :
+    (f.app e).ValidRefs p ↔ f.ValidRefs p ∧ e.ValidRefs p := by
+  constructor
+  · intro h
+    and_intros
+    · intro m r hl
+      apply_rules [Local.appL]
+    · intro m r hl
+      apply_rules [Local.appR]
+  · intro ⟨hf, he⟩ m r hl
+    cases hl <;> solve_by_elim
+
+@[simp, grind .]
+theorem Expr.validRefs_bool {p : Program} {b : Bool} :
+    (bool b).ValidRefs p := by
+  intro n r hl
+  cases hl
+
+@[simp, grind =]
+theorem Expr.validRefs_cond_iff {p : Program} {c et ef : Expr} :
+    (c.cond et ef).ValidRefs p ↔ c.ValidRefs p ∧ et.ValidRefs p ∧ ef.ValidRefs p := by
+  constructor
+  · intro h
+    and_intros
+    · intro m r hl
+      apply_rules [Local.condC]
+    · intro m r hl
+      apply_rules [Local.condT]
+    · intro m r hl
+      apply_rules [Local.condF]
+  · intro ⟨hc, het, hef⟩ m r hl
+    cases hl <;> solve_by_elim
+
+theorem Expr.validRefs_of_size_ge {p₁ p₂ : Program} {e : Expr}
+    (heq : p₁.size ≤ p₂.size) (h : e.ValidRefs p₁) : e.ValidRefs p₂ :=
+  fun _ _ hl => Nat.lt_of_lt_of_le (h hl) heq
 
 theorem Expr.types_in_push_of_types {p : Program} {e b : Expr} {t t' : Ty}
     (h : p ⊢ e : t) : p.push b t' ⊢ e : t := by

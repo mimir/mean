@@ -39,28 +39,6 @@ notation:40 n:41 " ≽[" p:min "] " m:41 => NestsEq p n m
 notation:40 n:41 " ⋡[" p:min "] " m:41 => ¬n ≽[p] m
 
 /--
-Local variables of an expression are those that occur as a subexpression.
-
-Unlike with free variables, this definition does not follow function references.
--/
-inductive Expr.LocalVar (n : Nat) : Expr → Prop where
-  | var : (var n).LocalVar n
-  | appL (f e : Expr) : f.LocalVar n → (f.app e).LocalVar n
-  | appR (f e : Expr) : e.LocalVar n → (f.app e).LocalVar n
-  | condC (c et ef : Expr) : c.LocalVar n → (c.cond et ef).LocalVar n
-  | condT (c et ef : Expr) : et.LocalVar n → (c.cond et ef).LocalVar n
-  | condF (c et ef : Expr) : ef.LocalVar n → (c.cond et ef).LocalVar n
-
-/-- Local functions of an expression are those that occur as a subexpression. -/
-inductive Expr.LocalFn (n : Nat) : Expr → Prop where
-  | fn : (fn n).LocalFn n
-  | appL (f e : Expr) : f.LocalFn n → (f.app e).LocalFn n
-  | appR (f e : Expr) : e.LocalFn n → (f.app e).LocalFn n
-  | condC (c et ef : Expr) : c.LocalFn n → (c.cond et ef).LocalFn n
-  | condT (c et ef : Expr) : et.LocalFn n → (c.cond et ef).LocalFn n
-  | condF (c et ef : Expr) : ef.LocalFn n → (c.cond et ef).LocalFn n
-
-/--
 The successor relation between functions.
 
 A function is a successor (in the CFG) of another function if it occurs in that
@@ -145,11 +123,11 @@ theorem cond_closed_iff {p : Program} {c et ef : Expr} :
 
 theorem lt_size_of_free {p : Program} {e : Expr} {n : Nat} (hp : p.ValidRefs)
     (he : e.ValidRefs p) (hf : e.Free p n) : n < p.size := by
-  induction hf with cases he <;> apply_rules
+  induction hf with simp_all <;> solve_by_elim
 
 theorem lt_size_left_of_nests {p : Program} {m n : Nat} (hp : p.ValidRefs)
     (h : m ≻[p] n) : m < p.size := by
-  induction h with apply_rules [lt_size_of_free]
+  induction h with solve_by_elim [lt_size_of_free]
 
 theorem lt_size_right_of_nests {p : Program} {m n : Nat} : n ≻[p] m → m < p.size
   | .free _ hm _ _ => hm
@@ -210,15 +188,22 @@ theorem Program.dominates_trans {p : Program} {m n k l : Nat}
 
 theorem Expr.free_of_localVar {p : Program} {e : Expr} {n : Nat}
     (h : e.LocalVar n) : e.Free p n := by
+  unfold LocalVar at h
+  generalize hr : RefKind.var = r at h
+  open Free in
   induction h with
-    solve_by_elim [Free.var, Free.appL, Free.appR, Free.condC, Free.condT, Free.condF]
+    first | contradiction
+          | solve_by_elim [var, appL, appR, condC, condT, condF]
 
 theorem Expr.free_of_localFn_of_free {p : Program} {e : Expr} {m n : Nat}
     (hm : m < p.size) (hne : n ≠ m) (hlf : e.LocalFn m)
     (hf : p.fn[m].Free p n) : e.Free p n := by
+  unfold LocalFn at hlf
+  generalize hr : RefKind.fn = r at hlf
   open Free in
   induction hlf with
-    solve_by_elim [var, appL, appR, condC, condT, condF]
+    first | contradiction
+          | solve_by_elim [var, appL, appR, condC, condT, condF]
 
 theorem Program.free_in_fn_of_succ {p : Program} {m n k : Nat} (hm : m < p.size)
     (hn : n < p.size) (hne : k ≠ n) (hs : m ⟶[p] n) (hf : p.fn[n].Free p k) :
@@ -239,11 +224,11 @@ theorem Expr.free_iff {p : Program} {e : Expr} {n : Nat} :
       obtain hlv | ⟨k, l, hl, hlf, hp, hlv⟩ := ih
       · exact ⟨m, hm, .fn, .refl _ hne, hlv⟩
       · exact ⟨l, hl, .fn, .step _ _ _ hne ⟨hm, hlf⟩ hp, hlv⟩
-    | appL => grind [LocalVar.appL, LocalFn.appL]
-    | appR => grind [LocalVar.appR, LocalFn.appR]
-    | condC => grind [LocalVar.condC, LocalFn.condC]
-    | condT => grind [LocalVar.condT, LocalFn.condT]
-    | condF => grind [LocalVar.condF, LocalFn.condF]
+    | appL => grind [Local.appL]
+    | appR => grind [Local.appR]
+    | condC => grind [Local.condC]
+    | condT => grind [Local.condT]
+    | condF => grind [Local.condF]
   · rintro (hlv | ⟨m, k, hk, hlf, hp, hlv⟩)
     · exact free_of_localVar hlv
     · have hf : p.fn[k].Free p n := free_of_localVar hlv

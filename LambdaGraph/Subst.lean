@@ -475,25 +475,25 @@ theorem subst_types {p : Program} {e v : Expr} {t : Ty} {n : Nat}
 
 theorem validRefs_in_subst {p : Program} {e v : Expr} {n : Nat}
     {map : LabelMap p} (he : e.ValidRefs p) :
-    e.ValidRefs (p.subst map n v) := by
-  induction he with constructor <;> apply_rules [lt_subst_size]
+    e.ValidRefs (p.subst map n v) :=
+  Expr.validRefs_of_size_ge program_subst_size_le he
 
 theorem expr_subst_validRefs {p : Program} {e v : Expr} {n : Nat}
     {map : LabelMap p} (hmap : map.Valid n) (he : e.ValidRefs p)
     (hv : v.ValidRefs p) : (e.subst map n v).ValidRefs (p.subst map n v) := by
-  induction he with
-    try solve | simp only [Expr.subst]; constructor <;> apply_rules
-  | var m hm =>
+  induction e with
+    try solve | simp_all [Expr.subst]
+  | var m =>
     by_cases h : n = m
-    · simp only [h, Expr.subst, ↓reduceIte]
+    · simp only [Expr.subst, ↓reduceIte, h]
       exact validRefs_in_subst hv
-    · simp [*, Expr.subst, ↓reduceIte, getElem?_pos, Option.getD_some]
-      constructor
-      exact hmap.fwd_lt hm
-  | fn =>
-    simp only [*, Expr.subst, getElem?_pos, Option.getD_some]
-    constructor
-    apply hmap.fwd_lt
+    · simp only [Expr.validRefs_var_iff] at he
+      simp [*, Expr.subst, ↓reduceIte, getElem?_pos, Option.getD_some]
+      exact hmap.fwd_lt he
+  | fn m =>
+    simp only [Expr.validRefs_fn_iff] at he
+    simp only [Expr.subst, getElem?_pos, Option.getD_some, Expr.validRefs_fn_iff, he]
+    exact hmap.fwd_lt he
 
 theorem subst_validRefs {p : Program} {v : Expr} {n : Nat} {map : LabelMap p}
     (hmap : map.Valid n) (hp : p.ValidRefs) (hv : v.ValidRefs p) :
@@ -512,13 +512,13 @@ theorem subst_eq_var {p : Program} {e v : Expr} {m n : Nat}
     ∃ i : Fin p.size, m = map.fwd[i] ∧ e = .var i := by
   cases e with simp only [Expr.subst] at h <;> try contradiction
   | var k =>
-    have .var _ hk := he
+    simp only [Expr.validRefs_var_iff] at he
     by_cases hnk : n = k
     · simp only [hnk, ↓reduceIte] at h
       subst v
       nomatch hv
-    · exists ⟨k, hk⟩
-      simpa [hnk, hk, eq_comm] using h
+    · exists ⟨k, he⟩
+      simpa [hnk, he, eq_comm] using h
 
 theorem subst_ne_subst_var {p : Program} {e v : Expr} {n : Nat}
     {map : LabelMap p} (hmap : map.Valid n) (hv : v.Value) :
@@ -548,9 +548,9 @@ theorem subst_eq_fn {p : Program} {e v : Expr} {m n : Nat} {map : LabelMap p}
     · simp at h
   | fn k =>
     right
-    have .fn _ hk := he
-    exists ⟨k, hk⟩
-    simpa [hk, eq_comm] using h
+    simp only [Expr.validRefs_fn_iff] at he
+    exists ⟨k, he⟩
+    simpa [he, eq_comm] using h
 
 theorem subst_eq_app {p : Program} {e e₁ e₂ v : Expr} {n : Nat}
     {map : LabelMap p} (hv : v.Value) (h : e.subst map n v = e₁.app e₂) :
@@ -586,14 +586,14 @@ theorem free_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
   generalize hp' : p.subst map n v = p' at hf
   open Expr.Free in
   induction hf with
-    try solve | cases he; solve_by_elim [appL, appR, condC, condT, condF]
+    try solve | grind [var, appL, appR, condC, condT, condF]
   | fn k hk' hne hf ih =>
-    have .fn _ hk := he
+    simp only [Expr.validRefs_fn_iff] at he
     constructor
     · exact hne
     · subst p'
-      rw [subst_fn_eq_of_lt _ _ hk] at ih
-      exact ih (hp hk)
+      rw [subst_fn_eq_of_lt _ _ he] at ih
+      exact ih (hp he)
 
 theorem not_free_in_subst {p : Program} {e v : Expr} {n : Nat}
     {map : LabelMap p} (hmap : map.Valid n) (hp : p.ValidRefs)
@@ -608,9 +608,9 @@ theorem not_free_in_subst {p : Program} {e v : Expr} {n : Nat}
     rcases subst_eq_fn he he' with rfl | ⟨⟨i, hi⟩, rfl, rfl⟩
     · simp only [Expr.subst, ↓reduceIte] at he'
       subst v
-      have .fn _ hm := hv
-      rw [subst_fn_eq_of_lt _ _ hm] at hf
-      replace hf := free_of_free_in_subst hp (hp hm) hf
+      simp only [Expr.validRefs_fn_iff] at hv
+      rw [subst_fn_eq_of_lt _ _ hv] at hf
+      replace hf := free_of_free_in_subst hp (hp hv) hf
       exact hc n (.fn _ _ hne hf)
     · by_cases hd : n ≻[p] i
       · obtain ⟨hle, hlt, hinv⟩ := hmap.nests hi hd
@@ -620,36 +620,11 @@ theorem not_free_in_subst {p : Program} {e v : Expr} {n : Nat}
         simp only [Fin.getElem_fin, hi', ne_eq] at hne
         replace hf := free_of_free_in_subst hp (hp hi) hf
         exact hd (.free _ _ hne hf)
-  | appL f e'' hf ih =>
-    obtain ⟨f', e''', rfl, rfl⟩ := subst_eq_app hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl⟩ := he'
-    replace .app _ _ hf he := he
-    exact ih hf rfl
-  | appR f e'' hf ih =>
-    obtain ⟨f', e''', rfl, rfl⟩ := subst_eq_app hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl⟩ := he'
-    replace .app _ _ hf he := he
-    exact ih he rfl
-  | condC c et ef hf ih =>
-    obtain ⟨c', et', ef', rfl, rfl, rfl⟩ := subst_eq_cond hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl, rfl⟩ := he'
-    have .cond _ _ _ hc het hef := he
-    exact ih hc rfl
-  | condT c et ef hf ih =>
-    obtain ⟨c', et', ef', rfl, rfl, rfl⟩ := subst_eq_cond hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl, rfl⟩ := he'
-    have .cond _ _ _ hc het hef := he
-    exact ih het rfl
-  | condF c et ef hf ih =>
-    obtain ⟨c', et', ef', rfl, rfl, rfl⟩ := subst_eq_cond hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl, rfl⟩ := he'
-    have .cond _ _ _ hc het hef := he
-    exact ih hef rfl
+  | appL => grind [Expr.subst, subst_eq_app]
+  | appR => grind [Expr.subst, subst_eq_app]
+  | condC => grind [Expr.subst, subst_eq_cond]
+  | condT => grind [Expr.subst, subst_eq_cond]
+  | condF => grind [Expr.subst, subst_eq_cond]
 
 theorem free_or_eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
     {map : LabelMap p} (hmap : map.Valid n) (hp : p.ValidRefs)
@@ -668,9 +643,9 @@ theorem free_or_eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
     rcases subst_eq_fn he he' with rfl | ⟨⟨i, hi⟩, rfl, rfl⟩
     · simp only [Expr.subst, ↓reduceIte] at he'
       subst v
-      have .fn _ hk := hv
-      rw [subst_fn_eq_of_lt _ _ hk] at hf
-      replace hf := free_of_free_in_subst hp (hp hk) hf
+      simp only [Expr.validRefs_fn_iff] at hv
+      rw [subst_fn_eq_of_lt _ _ hv] at hf
+      replace hf := free_of_free_in_subst hp (hp hv) hf
       solve_by_elim
     · by_cases hd : n ≻[p] i
       · obtain ⟨hle, hlt, hinv⟩ := hmap.nests hi hd
@@ -688,46 +663,11 @@ theorem free_or_eq_map_of_free_in_subst {p : Program} {e v : Expr} {m n : Nat}
         have hlt := lt_size_of_free hp (hp hi) hf
         have hm' := hmap.not_nests hlt hm
         refine Or.inr ⟨⟨m, hlt⟩, by simp [hm'], .fn _ hi hne hf⟩
-  | appL f e'' hf ih =>
-    obtain ⟨f', e''', rfl, rfl⟩ := subst_eq_app hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl⟩ := he'
-    replace .app _ _ hf he := he
-    obtain hf' | ⟨i, rfl, hf'⟩ := ih hf rfl
-    · exact Or.inl hf'
-    · exact Or.inr ⟨i, rfl, .appL _ _ hf'⟩
-  | appR f e'' hf ih =>
-    obtain ⟨f', e''', rfl, rfl⟩ := subst_eq_app hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl⟩ := he'
-    replace .app _ _ hf he := he
-    obtain hf' | ⟨i, rfl, hf'⟩ := ih he rfl
-    · exact Or.inl hf'
-    · exact Or.inr ⟨i, rfl, .appR _ _ hf'⟩
-  | condC c et ef hf ih =>
-    obtain ⟨c', et', ef', rfl, rfl, rfl⟩ := subst_eq_cond hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl, rfl⟩ := he'
-    have .cond _ _ _ hc het hef := he
-    obtain hf' | ⟨i, rfl, hf'⟩ := ih hc rfl
-    · exact Or.inl hf'
-    · exact Or.inr ⟨i, rfl, .condC _ _ _ hf'⟩
-  | condT c et ef hf ih =>
-    obtain ⟨c', et', ef', rfl, rfl, rfl⟩ := subst_eq_cond hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl, rfl⟩ := he'
-    have .cond _ _ _ hc het hef := he
-    obtain hf' | ⟨i, rfl, hf'⟩ := ih het rfl
-    · exact Or.inl hf'
-    · exact Or.inr ⟨i, rfl, .condT _ _ _ hf'⟩
-  | condF c et ef hf ih =>
-    obtain ⟨c', et', ef', rfl, rfl, rfl⟩ := subst_eq_cond hvv he'
-    simp only [Expr.subst] at he'
-    obtain ⟨rfl, rfl, rfl⟩ := he'
-    have .cond _ _ _ hc het hef := he
-    obtain hf' | ⟨i, rfl, hf'⟩ := ih hef rfl
-    · exact Or.inl hf'
-    · exact Or.inr ⟨i, rfl, .condF _ _ _ hf'⟩
+  | appL => grind [Expr.subst, Expr.Free.appL, subst_eq_app]
+  | appR => grind [Expr.subst, Expr.Free.appR, subst_eq_app]
+  | condC => grind [Expr.subst, Expr.Free.condC, subst_eq_cond]
+  | condT => grind [Expr.subst, Expr.Free.condT, subst_eq_cond]
+  | condF => grind [Expr.subst, Expr.Free.condF, subst_eq_cond]
 
 theorem eq_map_of_free_in_subst_of_closed {p : Program} {e v : Expr} {m n : Nat}
     {map : LabelMap p} (hmap : map.Valid n) (hp : p.ValidRefs)
