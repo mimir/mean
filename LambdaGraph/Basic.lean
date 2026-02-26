@@ -12,6 +12,13 @@ inductive Expr where
   | bool (b : Bool)
   | cond (c et ef : Expr)
 
+/--
+A recursive call of a function with its own argument.
+
+This is used during substitution as a temporary placeholder body.
+-/
+abbrev Expr.recurse (n : Nat) : Expr := (fn n).app (var n)
+
 /-- The type of an `Expr`. -/
 inductive Ty where
   | bot
@@ -116,11 +123,11 @@ inductive Expr.Local (n : Nat) : RefKind → Expr → Prop where
   | condF (r : RefKind) (c et ef : Expr) : ef.Local n r → (c.cond et ef).Local n r
 
 /-- A local variable in an expression. -/
-@[grind]
+@[grind unfold]
 def Expr.LocalVar (e : Expr) (n : Nat) : Prop := e.Local n .var
 
 /-- A local function reference in an expression. -/
-@[grind]
+@[grind unfold]
 def Expr.LocalFn (e : Expr) (n : Nat) : Prop := e.Local n .fn
 
 /-- All references in an expression are in bounds of a given program. -/
@@ -137,6 +144,16 @@ def Program.ValidRefs (p : Program) : Prop :=
 
 theorem Program.Types.validRefs {p : Program} (ht : ⊢ p) : p.ValidRefs :=
   fun hi => (ht hi).validRefs
+
+@[grind →]
+theorem Expr.lt_size_of_local {p : Program} {e : Expr} {n : Nat} {r : RefKind}
+    (he : e.ValidRefs p) (h : e.Local n r) : n < p.size := he h
+
+theorem Program.validRefs_fn {p : Program} {n : Nat} (hn : n < p.size)
+    (hp : p.ValidRefs) : p.fn[n].ValidRefs p := hp hn
+
+grind_pattern Program.validRefs_fn =>
+  p.ValidRefs, n < p.size, p.fn[n]
 
 @[simp, grind =]
 theorem Expr.local_var_iff {m n : Nat} {r : RefKind} :
@@ -266,3 +283,28 @@ theorem Program.types_push {p : Program} {b : Expr} {t' : Ty} (hp : ⊢ p)
     apply Expr.types_in_push_of_types
     simp [push, *]
     exact hp hi
+
+theorem Expr.validRefs_in_push {p : Program} {e b : Expr} {t : Ty}
+    (h : e.ValidRefs p) : e.ValidRefs (p.push b t) :=
+  validRefs_of_size_ge (by simp) h
+
+theorem Program.validRefs_push {p : Program} {b : Expr} {t : Ty}
+    (h : p.ValidRefs) (hb : b.ValidRefs (p.push b t)) :
+    (p.push b t).ValidRefs := by
+  intro i hi n r hl
+  by_cases i = p.size
+  · simp only [Vector.getElem_push_eq, *] at hl
+    simpa using Nat.lt_of_succ_le (hb hl)
+  · replace hi : i < p.size := by lia
+    simp only [Vector.getElem_push_lt, hi] at hl
+    exact Nat.lt_add_right 1 (h hi hl)
+
+theorem Program.validRefs_setBody {p : Program} {i : Nat} {b : Expr}
+    (hi : i < p.size) (h : p.ValidRefs) (hb : b.ValidRefs p) :
+    (p.setBody i b).ValidRefs := by
+  intro j hj
+  by_cases i = j
+  · simp only [Vector.getElem_set_self, *]
+    exact Expr.validRefs_of_size_ge (by simp) hb
+  · simp only [ne_eq, not_false_eq_true, Vector.getElem_set_ne, *]
+    apply Expr.validRefs_of_size_ge (by simp) (h hj)

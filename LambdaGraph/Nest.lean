@@ -73,7 +73,7 @@ def Program.Dominates (p : Program) (m n k : Nat) : Prop := ¬m ⟶[p, n]* k
 def Expr.Closed (p : Program) (e : Expr) : Prop := ∀ n, ¬e.Free p n
 
 /-- A program is well-formed if no function nests itself. -/
-def Program.WF (p : Program) : Prop := ∀ n, n ⊁[p] n
+def Program.WF (p : Program) : Prop := ∀ ⦃n⦄, n ⊁[p] n
 
 /--
 Free variables of a computation.
@@ -272,9 +272,9 @@ theorem Program.dominates_of_nests {p : Program} {m n k : Nat}
     have hnm : n ≻[p] m := by
       constructor
       · intro rfl
-        exact hwf _ hmn
+        exact hwf hmn
       · exact hfm
-    exact hwf _ (nests_trans hmn hnm)
+    exact hwf (nests_trans hmn hnm)
   | step l k hk hne hfk hnl ih =>
     apply dominates_trans ih
     intro hp
@@ -283,9 +283,9 @@ theorem Program.dominates_of_nests {p : Program} {m n k : Nat}
     have hlm : l ≻[p] m := by
       constructor
       · intro rfl
-        exact hwf _ (nests_trans hnl hmn)
+        exact hwf (nests_trans hnl hmn)
       · exact hfm
-    exact hwf _ (nests_trans hmn (nests_trans hnl hlm))
+    exact hwf (nests_trans hmn (nests_trans hnl hlm))
 
 theorem Program.dominates_of_nestsEq {p : Program} {m n k : Nat}
     (hv : p.ValidRefs) (hwf : p.WF) (hmn : m ≽[p] n) (hnk : n ≽[p] k) :
