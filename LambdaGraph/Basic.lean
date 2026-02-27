@@ -140,10 +140,10 @@ theorem Expr.Types.validRefs {p : Program} {e : Expr} {t : Ty} (ht : p ⊢ e : t
   induction ht with cases hl <;> solve_by_elim
 
 def Program.ValidRefs (p : Program) : Prop :=
-  ∀ {i} (_ : i < p.size), p.fn[i].ValidRefs p
+  ∀ ⦃i⦄ (_ : i < p.size), p.fn[i].ValidRefs p
 
 theorem Program.Types.validRefs {p : Program} (ht : ⊢ p) : p.ValidRefs :=
-  fun hi => (ht hi).validRefs
+  fun _ hi => (ht hi).validRefs
 
 @[grind →]
 theorem Expr.lt_size_of_local {p : Program} {e : Expr} {n : Nat} {r : RefKind}

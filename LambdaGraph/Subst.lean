@@ -785,7 +785,7 @@ theorem subst_wf  {p : Program} {n : Nat} {v : Expr} {map : LabelMap p}
     · simp only [hmap.fwd_inj hi hj heq] at h'
       exact hwf h'
 
-theorem Program.subst_ty_eq {p : Program} {e : Expr} {vm : VarMap p.size}
+theorem Program.subst_ty_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
     let ⟨p', _, fm', hsize, _⟩ := e.subst' p vm fm
     p'.ty[n] = p.ty[n] := by
@@ -838,7 +838,7 @@ theorem Expr.types_in_subst_of_types {p : Program} {e₁ e₂ : Expr} {t : Ty}
     (e₂.subst' p vm fm).program ⊢ e₁ : t := by
   induction ht with
     first | constructor <;> assumption
-          | rw [← Program.subst_ty_eq]; constructor
+          | rw [← Program.subst_ty_eq_of_lt]; constructor
 
 namespace VarMap
 
@@ -930,7 +930,7 @@ theorem extend_types {p : Program} (e : Expr) {vm : VarMap p.size}
   simp only [VarMap.extend, Fin.getElem_fin, Vector.getElem_ofFn]
   split
   · apply Expr.types_in_subst_of_types
-    rw [Program.subst_ty_eq]
+    rw [Program.subst_ty_eq_of_lt]
     apply hvm
     assumption
   · constructor
@@ -1032,7 +1032,7 @@ theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
     have .fn _ _ := ht
     have hp₂ : p₂ = (p.fn[m].subst' p₁ vm₁ fm₁).program := by grind
     subst hp₂
-    have : p.ty[m] = p₃.ty[p.size] := by grind [Program.subst_ty_eq]
+    have : p.ty[m] = p₃.ty[p.size] := by grind [Program.subst_ty_eq_of_lt]
     rw [this]
     constructor
   next p vm fm m hm m' hm' h =>
