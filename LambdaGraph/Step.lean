@@ -1,9 +1,9 @@
 import LambdaGraph.Subst
 
 /-- The small-step reduction relation. -/
-inductive Step : Computation → Computation → Prop where
+inductive Computation.Step : Computation → Computation → Prop where
   | app (p : Program) (n : Nat) (e : Expr) (_ : n < p.size) :
-    e.Value → Step ⟨p, .app (.fn n) e⟩ (.subst' ⟨p, p.fn[n]⟩ n e)
+    e.Value → Step ⟨p, .app (.fn n) e⟩ (.subst ⟨p, p.fn[n]⟩ n e)
   | appL (p p' : Program) (f f' e : Expr) :
     Step ⟨p, f⟩ ⟨p', f'⟩ → Step ⟨p, f.app e⟩ ⟨p', f'.app e⟩
   | appR (p p' : Program) (f e e' : Expr) :
@@ -15,31 +15,31 @@ inductive Step : Computation → Computation → Prop where
   | condC (p p' : Program) (c c' et ef : Expr) :
     Step ⟨p, c⟩ ⟨p', c'⟩ → Step ⟨p, c.cond et ef⟩ ⟨p', c'.cond et ef⟩
 
-notation:40 p:41 " ⇒ " p':41 => Step p p'
+notation:40 p:41 " ⇒ " p':41 => Computation.Step p p'
 
 /-- The reflexive-transitive closure of the reduction relation. -/
-inductive Steps : Computation → Computation → Prop where
+inductive Computation.Steps : Computation → Computation → Prop where
   | refl (c : Computation) : Steps c c
   | step (c c' c'' : Computation) : Step c c' → Steps c' c'' → Steps c c''
 
-notation:40 c:41 " ⇒* " c':41 => Steps c c'
+notation:40 c:41 " ⇒* " c':41 => Computation.Steps c c'
 
 namespace Computation
 
 theorem size_le_of_step {c c' : Computation} (h : c ⇒ c') :
     c.size ≤ c'.size := by
-  induction h with simp [subst', SubstResult.size_ge, *]
+  induction h with simp [subst, SubstResult.size_ge, *]
 
 theorem lt_size_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
     (h : c ⇒ c') : n < c'.size := Nat.lt_of_lt_of_le hn (size_le_of_step h)
 
 theorem fn_eq_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
     (h : c ⇒ c') : c.fn[n] = c'.fn[n]'(lt_size_of_step hn h) := by
-  induction h with simp [subst', Program.subst_fn_eq_of_lt hn, *]
+  induction h with simp [subst, Program.subst_fn_eq_of_lt hn, *]
 
 theorem ty_eq_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
     (h : c ⇒ c') : c.ty[n] = c'.ty[n]'(lt_size_of_step hn h) := by
-  induction h with simp [subst', Program.subst_ty_eq_of_lt hn, *]
+  induction h with simp [subst, Program.subst_ty_eq_of_lt hn, *]
 
 theorem types_of_step {c c' : Computation} {e : Expr} {t : Ty}
     (ht : c.toProgram ⊢ e : t) (hs : c ⇒ c') : c'.toProgram ⊢ e : t := by
@@ -51,11 +51,11 @@ theorem progress {c : Computation} {t : Ty} (hte : c.toProgram ⊢ c.expr : t)
   obtain ⟨p, e⟩ := c
   simp only at *
   induction hte with
-  | var n hn => exfalso; exact hc n .var
+  | var n hn => simp [Closed] at hc
   | fn n hn => left; constructor
   | app f e t htf hte ihf ihe =>
     right
-    obtain ⟨hcf, hce⟩ := app_closed_iff.mp hc
+    obtain ⟨hcf, hce⟩ := Expr.app_closed_iff.mp hc
     rcases ihf hcf with hvf | ⟨p', hp⟩
     · rcases ihe hce with hve | ⟨p', hp⟩
       · obtain ⟨n, rfl⟩ := value_types_cn htf hvf
@@ -66,7 +66,7 @@ theorem progress {c : Computation} {t : Ty} (hte : c.toProgram ⊢ c.expr : t)
   | bool b => left; constructor
   | cond c et ef t htc htet htef ihc ihet ihef =>
     right
-    obtain ⟨hcc, hcet, hcef⟩ := cond_closed_iff.mp hc
+    obtain ⟨hcc, hcet, hcef⟩ := Expr.cond_closed_iff.mp hc
     rcases ihc hcc with hvc | ⟨p', hp⟩
     · rcases value_types_bool htc hvc with ⟨_ | _, rfl⟩ <;> repeat constructor
     · exact ⟨_, Step.condC _ _ _ _ _ _ hp⟩
