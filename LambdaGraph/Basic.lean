@@ -123,16 +123,17 @@ inductive Expr.Local (n : Nat) : RefKind → Expr → Prop where
   | condF (r : RefKind) (c et ef : Expr) : ef.Local n r → (c.cond et ef).Local n r
 
 /-- A local variable in an expression. -/
-@[grind unfold]
-def Expr.LocalVar (e : Expr) (n : Nat) : Prop := e.Local n .var
+abbrev Expr.LocalVar (e : Expr) (n : Nat) : Prop := e.Local n .var
 
 /-- A local function reference in an expression. -/
-@[grind unfold]
-def Expr.LocalFn (e : Expr) (n : Nat) : Prop := e.Local n .fn
+abbrev Expr.LocalFn (e : Expr) (n : Nat) : Prop := e.Local n .fn
+
+/-- All references in an expression are less than `n`. -/
+def Expr.Bounded (e : Expr) (n : Nat) : Prop :=
+  ∀ ⦃m : Nat⦄ ⦃r : RefKind⦄, e.Local m r → m < n
 
 /-- All references in an expression are in bounds of a given program. -/
-def Expr.ValidRefs (e : Expr) (p : Program) : Prop :=
-  ∀ ⦃n : Nat⦄ ⦃r : RefKind⦄, e.Local n r → n < p.size
+abbrev Expr.ValidRefs (e : Expr) (p : Program) : Prop := e.Bounded p.size
 
 theorem Expr.Types.validRefs {p : Program} {e : Expr} {t : Ty} (ht : p ⊢ e : t)
     : e.ValidRefs p := by
@@ -199,8 +200,8 @@ theorem Expr.local_cond_iff {c et ef : Expr} {n : Nat} {r : RefKind} :
       solve_by_elim [Local.condC, Local.condT, Local.condF]
 
 @[simp, grind =]
-theorem Expr.validRefs_var_iff {p : Program} {n : Nat} :
-    (var n).ValidRefs p ↔ n < p.size := by
+theorem Expr.bounded_var_iff {n m : Nat} :
+    (var m).Bounded n ↔ m < n := by
   constructor <;> intro h
   · solve_by_elim
   · intro m r hl
@@ -208,8 +209,8 @@ theorem Expr.validRefs_var_iff {p : Program} {n : Nat} :
     exact h
 
 @[simp, grind =]
-theorem Expr.validRefs_fn_iff {p : Program} {n : Nat} :
-    (fn n).ValidRefs p ↔ n < p.size := by
+theorem Expr.bounded_fn_iff {n m : Nat} :
+    (fn m).Bounded n ↔ m < n := by
   constructor <;> intro h
   · solve_by_elim
   · intro m r hl
@@ -217,8 +218,8 @@ theorem Expr.validRefs_fn_iff {p : Program} {n : Nat} :
     exact h
 
 @[simp, grind =]
-theorem Expr.validRefs_app_iff {p : Program} {f e : Expr} :
-    (f.app e).ValidRefs p ↔ f.ValidRefs p ∧ e.ValidRefs p := by
+theorem Expr.bounded_app_iff {n : Nat} {f e : Expr} :
+    (f.app e).Bounded n ↔ f.Bounded n ∧ e.Bounded n := by
   constructor
   · intro h
     and_intros
@@ -230,14 +231,14 @@ theorem Expr.validRefs_app_iff {p : Program} {f e : Expr} :
     cases hl <;> solve_by_elim
 
 @[simp, grind .]
-theorem Expr.validRefs_bool {p : Program} {b : Bool} :
-    (bool b).ValidRefs p := by
+theorem Expr.bounded_bool {n : Nat} {b : Bool} :
+    (bool b).Bounded n := by
   intro n r hl
   cases hl
 
 @[simp, grind =]
-theorem Expr.validRefs_cond_iff {p : Program} {c et ef : Expr} :
-    (c.cond et ef).ValidRefs p ↔ c.ValidRefs p ∧ et.ValidRefs p ∧ ef.ValidRefs p := by
+theorem Expr.bounded_cond_iff {n : Nat} {c et ef : Expr} :
+    (c.cond et ef).Bounded n ↔ c.Bounded n ∧ et.Bounded n ∧ ef.Bounded n := by
   constructor
   · intro h
     and_intros
@@ -250,9 +251,9 @@ theorem Expr.validRefs_cond_iff {p : Program} {c et ef : Expr} :
   · intro ⟨hc, het, hef⟩ m r hl
     cases hl <;> solve_by_elim
 
-theorem Expr.validRefs_of_size_ge {p₁ p₂ : Program} {e : Expr}
-    (heq : p₁.size ≤ p₂.size) (h : e.ValidRefs p₁) : e.ValidRefs p₂ :=
-  fun _ _ hl => Nat.lt_of_lt_of_le (h hl) heq
+theorem Expr.bounded_of_ge {n₁ n₂ : Nat} {e : Expr}
+    (hle : n₁ ≤ n₂) (h : e.Bounded n₁) : e.Bounded n₂ :=
+  fun _ _ hl => Nat.lt_of_lt_of_le (h hl) hle
 
 theorem Expr.types_in_push_of_types {p : Program} {e b : Expr} {t t' : Ty}
     (h : p ⊢ e : t) : p.push b t' ⊢ e : t := by
@@ -286,7 +287,7 @@ theorem Program.types_push {p : Program} {b : Expr} {t' : Ty} (hp : ⊢ p)
 
 theorem Expr.validRefs_in_push {p : Program} {e b : Expr} {t : Ty}
     (h : e.ValidRefs p) : e.ValidRefs (p.push b t) :=
-  validRefs_of_size_ge (by simp) h
+  bounded_of_ge (by simp) h
 
 theorem Program.validRefs_push {p : Program} {b : Expr} {t : Ty}
     (h : p.ValidRefs) (hb : b.ValidRefs (p.push b t)) :
@@ -304,7 +305,6 @@ theorem Program.validRefs_setBody {p : Program} {i : Nat} {b : Expr}
     (p.setBody i b).ValidRefs := by
   intro j hj
   by_cases i = j
-  · simp only [Vector.getElem_set_self, *]
-    exact Expr.validRefs_of_size_ge (by simp) hb
+  · simp [*]
   · simp only [ne_eq, not_false_eq_true, Vector.getElem_set_ne, *]
-    apply Expr.validRefs_of_size_ge (by simp) (h hj)
+    apply Expr.bounded_of_ge (by simp) (h hj)
