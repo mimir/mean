@@ -41,7 +41,7 @@ abbrev FunMap (n : Nat) := Vector (Option Nat) n
 
 /-- Creates a new function map of size `n`. -/
 @[grind unfold]
-def FunMap.mk (n : Nat) : FunMap n := Vector.ofFn (↑·)
+def FunMap.mk (n : Nat) : FunMap n := Vector.ofFn fun _ => none
 
 /-- Updates the map to map a given function to a function with a fresh label. -/
 def FunMap.update {n : Nat} (fm : FunMap n) (m : Nat)
@@ -335,8 +335,7 @@ theorem getElem_update {n : Nat} {fm : FunMap n} {m i : Nat} (hm : m < n)
 
 theorem mk_types {p : Program} : (mk _).Types p := by
   intro m hm n heq
-  simp only [mk, Vector.getElem_ofFn, Option.some.injEq] at heq
-  simpa [heq] using hm
+  simp [mk, *] at heq
 
 theorem update_types {p : Program} {fm : FunMap p.size} {b : Expr} {m : Nat}
     (hm : m < p.size) (h : fm.Types p) :
@@ -550,7 +549,7 @@ structure FunMap.Valid {n : Nat} (fm : FunMap n) : Prop where
   idem : ∀ {m} (_ : m < n),
     (fm[fm[m].getD m]'(lt _)).getD (fm[m].getD m) = fm[m].getD m
   eq_none : ∀ {m k} (_ : m < n) (_ : k < n),
-    fm[m] = none → fm[k].getD k ≠ m
+    fm[m] = none → m = fm[k].getD k → m = k
 
 grind_pattern FunMap.Valid.lt =>
   fm.Valid, m < n, fm[m].getD m
@@ -875,7 +874,7 @@ structure Program.ValidSubst (p : Program) (vm : VarMap p.size) (fm : FunMap p.s
 
 theorem Program.validSubst_mk {p : Program} {n : Nat} {v : Expr} :
     p.ValidSubst (.mk _ n v) (.mk _) := by
-  constructor <;> grind
+  constructor <;> grind [Expr.NoSubst]
 
 theorem Program.validSubst_push_recurse {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {i : Nat} (hi : i < p.size) (hfm : fm.Valid)
