@@ -47,6 +47,26 @@ abbrev Program.setBody (p : Program) (i : Nat) (b : Expr)
     (hi : i < p.size := by get_elem_tactic) : Program :=
   { p with fn := p.fn.set i b }
 
+/-- Extending a program at the end keeps the old program as a prefix. -/
+structure Program.Prefix (p p' : Program) where
+  size_le : p.size ≤ p'.size
+  fn_eq : ∀ {m} (_ : m < p.size), p'.fn[m] = p.fn[m]
+  ty_eq : ∀ {m} (_ : m < p.size), p'.ty[m] = p.ty[m]
+
+attribute [grind →] Program.Prefix.size_le
+
+grind_pattern Program.Prefix.fn_eq =>
+  p.Prefix p', m < p.size, p.fn[m]
+
+grind_pattern Program.Prefix.fn_eq =>
+  p.Prefix p', m < p.size, p'.fn[m]
+
+grind_pattern Program.Prefix.ty_eq =>
+  p.Prefix p', m < p.size, p.ty[m]
+
+grind_pattern Program.Prefix.ty_eq =>
+  p.Prefix p', m < p.size, p'.ty[m]
+
 /-- A computation consists of a program and an expression to be evaluated. -/
 @[pp_using_anonymous_constructor]
 structure Computation extends Program where
@@ -135,6 +155,7 @@ def Expr.Bounded (e : Expr) (n : Nat) : Prop :=
 /-- All references in an expression are in bounds of a given program. -/
 abbrev Expr.ValidRefs (e : Expr) (p : Program) : Prop := e.Bounded p.size
 
+@[grind →]
 theorem Expr.Types.validRefs {p : Program} {e : Expr} {t : Ty} (ht : p ⊢ e : t)
     : e.ValidRefs p := by
   intro n r hl
@@ -143,6 +164,7 @@ theorem Expr.Types.validRefs {p : Program} {e : Expr} {t : Ty} (ht : p ⊢ e : t
 def Program.ValidRefs (p : Program) : Prop :=
   ∀ ⦃i⦄ (_ : i < p.size), p.fn[i].ValidRefs p
 
+@[grind →]
 theorem Program.Types.validRefs {p : Program} (ht : ⊢ p) : p.ValidRefs :=
   fun _ hi => (ht hi).validRefs
 
@@ -251,25 +273,32 @@ theorem Expr.bounded_cond_iff {n : Nat} {c et ef : Expr} :
   · intro ⟨hc, het, hef⟩ m r hl
     cases hl <;> solve_by_elim
 
+@[grind .]
 theorem Expr.bounded_of_ge {n₁ n₂ : Nat} {e : Expr}
     (hle : n₁ ≤ n₂) (h : e.Bounded n₁) : e.Bounded n₂ :=
   fun _ _ hl => Nat.lt_of_lt_of_le (h hl) hle
 
+@[grind →]
+theorem Program.prefix_trans {p p' p'' : Program} (h : p.Prefix p')
+    (h' : p'.Prefix p'') : p.Prefix p'' := by
+  constructor <;> grind
+
+theorem Program.prefix_push {p : Program} {b : Expr} {t : Ty} :
+    p.Prefix (p.push b t) := by
+  constructor <;> simp_all
+
+grind_pattern Program.prefix_push => p.push b t
+
+theorem Expr.types_in_prefix_iff {p p' : Program} {e : Expr} {t : Ty}
+    (he : e.ValidRefs p) (h : p.Prefix p') : p' ⊢ e : t ↔ p ⊢ e : t := by
+  constructor <;> intro ht <;> induction ht with grind [intro Types]
+
+grind_pattern Expr.types_in_prefix_iff => p.Prefix p', p ⊢ e : t
+grind_pattern Expr.types_in_prefix_iff => p.Prefix p', p' ⊢ e : t
+
 theorem Expr.types_in_push_of_types {p : Program} {e b : Expr} {t t' : Ty}
-    (h : p ⊢ e : t) : p.push b t' ⊢ e : t := by
-  induction h with try solve_by_elim
-  | var n hn =>
-    have hn' : n < (p.push b t').size := by lia
-    have : p.ty[n] = (p.push b t').ty[n] := by
-      simp [Program.push, hn]
-    rw [this]
-    constructor
-  | fn n hn =>
-    have hn' : n < (p.push b t').size := by lia
-    have : p.ty[n] = (p.push b t').ty[n] := by
-      simp [Program.push, hn]
-    rw [this]
-    constructor
+    (h : p ⊢ e : t) : p.push b t' ⊢ e : t :=
+  (types_in_prefix_iff h.validRefs Program.prefix_push).mpr h
 
 theorem Expr.types_in_setBody_of_types {p : Program} {e b : Expr} {t : Ty}
     {i : Nat} (hi : i < p.size) (h : p ⊢ e : t) : p.setBody i b ⊢ e : t := by

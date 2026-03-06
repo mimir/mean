@@ -152,6 +152,7 @@ noncomputable def Computation.subst (p : Computation) (n : Nat) (v : Expr) :
   let ⟨p', e', _, _, _⟩ := p.expr.subst p.toProgram (.mk _ n v) (.mk _)
   ⟨p', e'⟩
 
+@[simp]
 theorem Program.subst_ty_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
     let ⟨p', _, fm', hsize, _⟩ := e.subst p vm fm
@@ -159,53 +160,53 @@ theorem Program.subst_ty_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
   fun_induction Expr.subst <;> dsimp only at *
   next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
       p₃ f'' hsize hum h ih =>
-    have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
-    subst p₂
+    rw [hs₂] at ih
     grind
   next p vm fm f e p₁ f' fm₁ hsize₁ hum₁ hs₁ p₂ e' fm₂ hsize₂ hum₂ hs₂ h ihf ihe =>
-    have hp₁ : p₁ = (f.subst p vm fm).program := by grind
-    have hp₂ : p₂ = (e.subst p₁ vm.extend fm₁).program := by grind
-    subst p₁ p₂
+    rw [hs₁] at ihf
+    rw [hs₂] at ihe
     grind
   next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
       p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
-    have hp₁ : p₁ = (c.subst p vm fm).program := by grind
-    have hp₂ : p₂ = (et.subst p₁ vm.extend fm₁).program := by grind
-    have hp₃ : p₃ = (ef.subst p₂ vm₁.extend fm₂).program := by grind
-    subst p₁ p₂ p₃
+    rw [hs₁] at ihc
+    rw [hs₂] at ihet
+    rw [hs₃] at ihef
     grind
 
+@[simp]
 theorem Program.subst_fn_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
     let ⟨p', _, _, hsize, _⟩ := (e.subst p vm fm)
     p'.fn[n] = p.fn[n] := by
-  fun_induction Expr.subst <;>
-    first | grind
-          | dsimp only at *
+  fun_induction Expr.subst <;> dsimp only at *
   next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
       p₃ f'' hsize hum h ih =>
-    have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
-    subst p₂
+    rw [hs₂] at ih
     grind
   next p vm fm f e p₁ f' fm₁ hsize₁ hum₁ hs₁ p₂ e' fm₂ hsize₂ hum₂ hs₂ h ihf ihe =>
-    have hp₁ : p₁ = (f.subst p vm fm).program := by grind
-    have hp₂ : p₂ = (e.subst p₁ vm.extend fm₁).program := by grind
-    subst p₁ p₂
+    rw [hs₁] at ihf
+    rw [hs₂] at ihe
     grind
   next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
       p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
-    have hp₁ : p₁ = (c.subst p vm fm).program := by grind
-    have hp₂ : p₂ = (et.subst p₁ vm.extend fm₁).program := by grind
-    have hp₃ : p₃ = (ef.subst p₂ vm₁.extend fm₂).program := by grind
-    subst p₁ p₂ p₃
+    rw [hs₁] at ihc
+    rw [hs₂] at ihet
+    rw [hs₃] at ihef
     grind
+
+theorem Program.prefix_subst {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} : p.Prefix (e.subst p vm fm).program := by
+  constructor
+  · exact subst_fn_eq_of_lt
+  · exact subst_ty_eq_of_lt
+  · exact (e.subst p vm fm).size_ge
+
+grind_pattern Program.prefix_subst => (e.subst p vm fm).program
 
 theorem Expr.types_in_subst_of_types {p : Program} {e₁ e₂ : Expr} {t : Ty}
     {vm : VarMap p.size} {fm : FunMap p.size} (ht : p ⊢ e₁ : t) :
-    (e₂.subst p vm fm).program ⊢ e₁ : t := by
-  induction ht with
-    first | constructor <;> assumption
-          | rw [← Program.subst_ty_eq_of_lt]; constructor
+    (e₂.subst p vm fm).program ⊢ e₁ : t :=
+  (types_in_prefix_iff ht.validRefs Program.prefix_subst).mpr ht
 
 namespace VarMap
 
@@ -411,12 +412,12 @@ theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
   next =>
     have .app _ _ t' htf hte := ht
     apply Types.app _ _ t' <;>
-      grind [types_in_subst_of_types, VarMap.extend_types, FunMap.subst_types]
+      grind [VarMap.extend_types, FunMap.subst_types]
   next => exact ht
   next =>
     have .cond _ _ _ _ htc htet htef := ht
     constructor <;>
-      grind [types_in_subst_of_types, VarMap.extend_types, FunMap.subst_types]
+      grind [VarMap.extend_types, FunMap.subst_types]
 
 theorem Program.subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (ht : ⊢ p) (hvm : vm.Types p) (hfm : fm.Types p) :
@@ -740,11 +741,9 @@ theorem Expr.validRefs_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     have hfmm : fm[m].getD m = m' := by simp [*]
     grind
   next => grind
-  next =>
-    grind [bounded_of_ge, noSubst_of_extends_of_noSubst]
+  next => grind [noSubst_of_extends_of_noSubst]
   next => simp
-  next =>
-    grind [bounded_of_ge, noSubst_of_extends_of_noSubst]
+  next => grind [noSubst_of_extends_of_noSubst]
 
 theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid)
@@ -836,7 +835,7 @@ theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     have hext₂ : fm₃.Extends fm₂ := by grind
     have hvc' : c'.ValidRefs p₁ := by grind [validRefs_subst]
     have hvet' : et'.ValidRefs p₂ := by
-      grind [validRefs_subst, bounded_of_ge, noSubst_of_extends_of_noSubst]
+      grind [validRefs_subst, noSubst_of_extends_of_noSubst]
     obtain hl | hl | hl := Expr.local_cond_iff.mp hl
     · replace ⟨hn, heq⟩ := hext₁.eq_of_lt hn (hvc' hl)
       rw [heq] at hl
@@ -942,7 +941,7 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
         (FunMap.extends_update hm heq) (hvalid.fn_noSubst hm heq))
     have hprov : fm₂.LocalProvenance p.fn[m] f' none := by
       grind [Expr.localProvenance_subst, Expr.noSubst_of_extends_of_noSubst,
-        FunMap.extends_update, hvalid.fn_noSubst, Expr.bounded_of_ge]
+        FunMap.extends_update, hvalid.fn_noSubst]
     have hext₁ := FunMap.extends_update hm heq
     have hext₂ : fm₂.Extends fm₁ := by grind
     have hext := FunMap.extends_trans hext₁ hext₂
@@ -1208,21 +1207,7 @@ theorem Expr.free_of_free_in_subst {p : Program} {e₁ e₂ : Expr}
 theorem Program.nests_of_nests_in_subst_of_lt {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} {m n : Nat} (hn : n < p.size)
     (hp : p.ValidRefs) (h : m ≻[(e.subst p vm fm).program] n) :
-    m ≻[p] n := by
-  generalize hp' : (e.subst p vm fm).program = p' at h
-  induction h with
-  | free n hn' hne hf' =>
-    subst p'
-    have hf : p.fn[n].Free p m := by
-      apply Expr.free_of_free_in_subst hp (hp hn)
-      simpa [subst_fn_eq_of_lt hn] using hf'
-    exact Nests.free _ hn hne hf
-  | step k n hn' hne hf' h ih =>
-    subst p'
-    have hf : p.fn[n].Free p k := by
-      apply Expr.free_of_free_in_subst hp (hp hn)
-      simpa [subst_fn_eq_of_lt hn] using hf'
-    exact Nests.step _ _ hn hne hf (ih (Expr.lt_size_of_free hp (hp hn) hf))
+    m ≻[p] n := (nests_in_prefix_iff hn hp prefix_subst).mp h
 
 theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)

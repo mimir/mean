@@ -107,24 +107,29 @@ theorem Expr.cond_closed_iff {p : Program} {c et ef : Expr} :
     and_intros <;> solve_by_elim [condC, condT, condF]
   · rintro ⟨hc, het, hef⟩ n (- | - | -) <;> solve_by_elim
 
+@[grind →]
 theorem Expr.lt_size_of_free {p : Program} {e : Expr} {n : Nat}
     (hp : p.ValidRefs) (he : e.ValidRefs p) (hf : e.Free p n) : n < p.size := by
   induction hf with simp_all <;> solve_by_elim
 
+@[grind →]
 theorem Program.lt_size_left_of_nests {p : Program} {m n : Nat}
     (hp : p.ValidRefs) (h : m ≻[p] n) : m < p.size := by
   induction h with solve_by_elim [Expr.lt_size_of_free]
 
+@[grind →]
 theorem Program.lt_size_right_of_nests {p : Program} {m n : Nat} :
     n ≻[p] m → m < p.size
   | .free _ hm _ _ => hm
   | .step _ _ hm _ _ _ => hm
 
+@[grind →]
 theorem Program.lt_size_left_of_nestsEq {p : Program} {m n : Nat}
     (hp : p.ValidRefs) : m ≽[p] n → m < p.size
   | .refl h => h
   | .nests _ h => lt_size_left_of_nests hp h
 
+@[grind →]
 theorem Program.nests_trans {p : Program} {m n k : Nat} (h : m ≻[p] n)
     (h' : n ≻[p] k) : m ≻[p] k := by
   induction h' with apply Nests.step <;> assumption
@@ -235,6 +240,75 @@ theorem Program.free_in_fn_iff {p : Program} {m n : Nat} (hm : m < p.size)
     | step m l k hne hs hp =>
       obtain ⟨_, hlf⟩ := hs
       exact Expr.free_iff.mpr <| Or.inr ⟨l, k, hk, hlf, hp, hlv⟩
+
+theorem Expr.free_in_prefix_iff {p p' : Program} {e : Expr} {n : Nat}
+    (hp : p.ValidRefs) (he : e.ValidRefs p) (h : p.Prefix p') :
+    e.Free p' n ↔ e.Free p n := by
+  have hle := h.size_le
+  constructor
+  · intro hf
+    induction hf with grind [intro Free]
+  · intro hf
+    induction hf with grind [intro Free]
+
+grind_pattern Expr.free_in_prefix_iff => p.Prefix p', e.ValidRefs p, e.Free p n
+grind_pattern Expr.free_in_prefix_iff => p.Prefix p', e.ValidRefs p, e.Free p' n
+
+theorem Program.pathWithout_in_prefix_iff {p p'} {n m k : Nat}
+    (hn : n < p.size) (hp : p.ValidRefs) (h : p.Prefix p') :
+    n ⟶[p', m]* k ↔ n ⟶[p, m]* k := by
+  constructor
+  · intro hpath
+    induction hpath with
+    | refl n hne => exact .refl _ hne
+    | step n l k hne hs hpath ih =>
+      obtain ⟨_, hlf⟩ := hs
+      rw [h.fn_eq hn] at hlf
+      exact .step _ _ _ hne ⟨hn, hlf⟩ (ih (hp hn hlf))
+  · intro hpath
+    induction hpath with
+    | refl n hne => exact .refl _ hne
+    | step n l k hne hs hpath ih =>
+      obtain ⟨_, hlf⟩ := hs
+      exact .step _ _ _ hne ⟨by grind, h.fn_eq hn ▸ hlf⟩ (ih (hp hn hlf))
+
+grind_pattern Program.pathWithout_in_prefix_iff => p.Prefix p', n ⟶[p, m]* k
+grind_pattern Program.pathWithout_in_prefix_iff => p.Prefix p', n ⟶[p', m]* k
+
+theorem Program.nests_in_prefix_iff {p p' : Program} {n m : Nat}
+    (hm : m < p.size) (hp : p.ValidRefs) (h : p.Prefix p') :
+    n ≻[p'] m ↔ n ≻[p] m := by
+  constructor
+  · intro hnests
+    induction hnests with
+    | free m hm hne hf =>
+      rw [h.fn_eq hm] at *
+      exact .free _ hm hne ((Expr.free_in_prefix_iff hp (hp hm) h).mp hf)
+    | step k m hm' hne hf hnests ih =>
+      obtain ⟨l, hl, hlv, hpath⟩ := (free_in_fn_iff hm' hne).mp hf
+      rw [h.fn_eq hm] at hf
+      replace hf := (Expr.free_in_prefix_iff hp (hp hm) h).mp hf
+      exact .step _ _ _ hne hf (ih (Expr.lt_size_of_free hp (hp hm) hf))
+  · intro hnests
+    induction hnests with
+    | free m hm hne hf =>
+      refine .free _ (by grind) hne <|
+        (Expr.free_in_prefix_iff hp (h.fn_eq hm ▸ hp hm) h).mpr (h.fn_eq hm ▸ hf)
+    | step k m _ hne hf hnests ih =>
+      have hk := Expr.lt_size_of_free hp (hp hm) hf
+      replace hf := (Expr.free_in_prefix_iff hp (hp hm) h).mpr hf
+      exact .step _ _ (by grind) hne (h.fn_eq hm ▸ hf) (ih hk)
+
+grind_pattern Program.nests_in_prefix_iff => p.Prefix p', n ≻[p] m
+grind_pattern Program.nests_in_prefix_iff => p.Prefix p', n ≻[p'] m
+
+theorem Program.nestsEq_in_prefix_iff {p p' : Program} {n m : Nat}
+    (hm : m < p.size) (hp : p.ValidRefs) (h : p.Prefix p') :
+    n ≽[p'] m ↔ n ≽[p] m := by
+  constructor <;> rintro (hnests | hnests) <;> grind [intro NestsEq]
+
+grind_pattern Program.nestsEq_in_prefix_iff => p.Prefix p', n ≽[p] m
+grind_pattern Program.nestsEq_in_prefix_iff => p.Prefix p', n ≽[p'] m
 
 theorem Program.free_of_pathWithout_of_free {p : Program} {m n k : Nat}
     (hm : m < p.size) (hk : k < p.size) (hp : m ⟶[p, n]* k)
