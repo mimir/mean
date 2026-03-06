@@ -922,7 +922,7 @@ theorem Program.validSubst_push_recurse {p : Program} {vm : VarMap p.size}
 
 theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
-    (hvalid : p.ValidSubst vm fm) (he : e.ValidRefs p) (hns : e.NoSubst fm) :
+    (hvalid : p.ValidSubst vm fm) :
     let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
     p'.ValidSubst vm.extend fm' := by
   fun_induction Expr.subst <;> try simpa using hvalid
@@ -936,9 +936,6 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     have hfm₂ : fm₂.Valid := by grind
     have hp₂ := ih hvm₁ hfm₁ (validRefs_push hp (by grind))
       (validSubst_push_recurse hm hfm hp hvalid)
-      (Expr.validRefs_in_push (hp hm))
-      (Expr.noSubst_of_extends_of_noSubst (by grind)
-        (FunMap.extends_update hm heq) (hvalid.fn_noSubst hm heq))
     have hprov : fm₂.LocalProvenance p.fn[m] f' none := by
       grind [Expr.localProvenance_subst, Expr.noSubst_of_extends_of_noSubst,
         FunMap.extends_update, hvalid.fn_noSubst]
@@ -985,10 +982,8 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
       obtain ⟨hk, heq⟩ := hext.eq_of_lt hk hk'
       rw [heq] at hl ⊢
       exact hvalid.fn_noSubst hn hfm' hk hl
-  next =>
-    grind [validRefs_subst, Expr.bounded_of_ge, Expr.noSubst_of_extends_of_noSubst]
-  next =>
-    grind [validRefs_subst, Expr.bounded_of_ge, Expr.noSubst_of_extends_of_noSubst]
+  next => grind [validRefs_subst]
+  next => grind [validRefs_subst]
 
 theorem Program.exists_of_ge_in_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (h : fm.Valid) {n' : Nat}
@@ -1061,8 +1056,8 @@ theorem Program.lt_size_of_pathWithout_of_lt {p : Program} {e : Expr}
 theorem Program.pathWithout_of_pathWithout_in_subst_of_ge {p : Program}
     {e : Expr} {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (h : p.ValidSubst vm fm)
-    (he : e.ValidRefs p) (hns : e.NoSubst fm) {n' m' k' : Nat}
-    (hn' : p.size ≤ n') (hm' : p.size ≤ m') (hk' : p.size ≤ k') :
+    {n' m' k' : Nat} (hn' : p.size ≤ n') (hm' : p.size ≤ m')
+    (hk' : p.size ≤ k') :
     let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
     n' < p'.size → m' < p'.size → k' < p'.size → m' ⟶[p', n']* k' →
       ∃ (n m k : Nat) (hn : n < p.size) (hm : m < p.size) (hk : k < p.size),
@@ -1072,7 +1067,7 @@ theorem Program.pathWithout_of_pathWithout_in_subst_of_ge {p : Program}
   let fm' := (e.subst p vm fm).funMap
   have hsize := (e.subst p vm fm).size_ge
   have hvp' : p'.ValidRefs := validRefs_subst hvm hfm hp
-  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h he hns
+  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h
   induction hp' with
   | refl m' hne' =>
     obtain ⟨n, hn, hfmn⟩ := exists_of_ge_in_subst hfm hn' hnlt
@@ -1101,8 +1096,7 @@ theorem Program.pathWithout_of_pathWithout_in_subst_of_ge {p : Program}
 theorem Program.free_in_fn_of_free_in_subst_of_ge {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (h : p.ValidSubst vm fm)
-    (he : e.ValidRefs p) (hns : e.NoSubst fm) {n' m' : Nat} (hn' : p.size ≤ n')
-    (hm' : p.size ≤ m') (hne' : n' ≠ m') :
+    {n' m' : Nat} (hn' : p.size ≤ n') (hm' : p.size ≤ m') (hne' : n' ≠ m') :
     let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
     ∀ (_ : m' < p'.size), p'.fn[m'].Free p' n' →
       ∃ (n m : Nat) (hn : n < p.size) (hm : m < p.size),
@@ -1111,12 +1105,12 @@ theorem Program.free_in_fn_of_free_in_subst_of_ge {p : Program} {e : Expr}
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
   have hvp' : p'.ValidRefs := validRefs_subst hvm hfm hp
-  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h he hns
+  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h
   obtain ⟨k', hklt, hlv', hp'⟩ := (free_in_fn_iff hmlt hne').mp hf'
   have hk' : p.size ≤ k' := by grind [subst_fn_eq_of_lt]
   have hnlt : n' < p'.size := by grind
   obtain ⟨n, m, k, hn, hm, hk, hfmn, hfmm, hfmk, hp⟩ :=
-    pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp h he hns hn' hm' hk' hnlt hmlt hklt hp'
+    pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp h hn' hm' hk' hnlt hmlt hklt hp'
   have hne : n ≠ m := by grind
   have hlv := h'.fn_localProvenance
     (show k < p'.size by lia) hklt (by lia) (by grind)
@@ -1136,7 +1130,7 @@ theorem Expr.free_of_free_in_subst_of_ge {p : Program} {e : Expr}
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
   have hvp' : p'.ValidRefs := Program.validRefs_subst hvm hfm hp
-  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h he hns
+  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h
   have hfm' : fm'.Valid := FunMap.valid_subst hfm
   have hlt : n' < p'.size :=
     lt_size_of_free hvp' (validRefs_subst hvm hfm he) hf
@@ -1150,7 +1144,7 @@ theorem Expr.free_of_free_in_subst_of_ge {p : Program} {e : Expr}
     · simp only [Nat.not_lt] at hm'
       have hk' : p.size ≤ k' := by grind [Program.subst_fn_eq_of_lt]
       obtain ⟨n, m, k, hn, hm, hk, hfmn, hfmm, hfmk, hp⟩ :=
-        Program.pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp h he hns hn' hm' hk'
+        Program.pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp h hn' hm' hk'
           ‹_› (validRefs_subst hvm hfm he hlf') ‹_› hp'
       have hlf := localProvenance_subst hvm hfm he hns
         (show m < p'.size by lia) (by lia) (by simpa [*] using hlf')
@@ -1212,14 +1206,14 @@ theorem Program.nests_of_nests_in_subst_of_lt {p : Program} {e : Expr}
 theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (h : p.ValidSubst vm fm)
-    (he : e.ValidRefs p) (hns : e.NoSubst fm) {n' m' : Nat} (hn' : p.size ≤ n') :
+    {n' m' : Nat} (hn' : p.size ≤ n') :
     let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
     n' ≻[p'] m' → ∃ (n m : Nat) (hn : n < p.size) (hm : m < p.size),
       n' = fm'[n].getD n ∧ m' = fm'[m].getD m ∧ n ≻[p] m := by
   intro hnests'
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
-  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h he hns
+  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h
   have hfm' : fm'.Valid := FunMap.valid_subst hfm
   induction hnests' with
   | free m' hltm hne' hf' =>
@@ -1230,7 +1224,7 @@ theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
       have := lt_size_of_free_in_subst_of_lt hp hm' hne' hf'
       lia
     obtain ⟨n, m, hn, hm, hfmn, hfmm, hf⟩ :=
-      Program.free_in_fn_of_free_in_subst_of_ge hvm hfm hp h he hns hn' hm' hne' hltm hf'
+      Program.free_in_fn_of_free_in_subst_of_ge hvm hfm hp h hn' hm' hne' hltm hf'
     have hne : n ≠ m := by grind
     exact ⟨n, m, hn, hm, hfmn, hfmm, .free _ hm hne hf⟩
   | step k' m' hmlt hne' hf' hnests' ih =>
@@ -1246,7 +1240,7 @@ theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
       have := lt_size_of_free_in_subst_of_lt hp (by simpa using hm') hne' hf'
       lia
     obtain ⟨l, m, hl, hm, hfml, hfmm, hf⟩ :=
-      free_in_fn_of_free_in_subst_of_ge hvm hfm hp h he hns hk' hm' hne' hmlt hf'
+      free_in_fn_of_free_in_subst_of_ge hvm hfm hp h hk' hm' hne' hmlt hf'
     obtain rfl : k = l := hfm'.inj (by lia) (by lia) (by lia) (by lia) (hfmk ▸ hfml)
     have hne : k ≠ m := by grind
     exact ⟨n, m, hn, hm, hfmn, hfmm, .step _ _ hm hne hf hnests⟩
@@ -1254,16 +1248,18 @@ theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
 theorem Program.subst_wf {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (h : p.ValidSubst vm fm)
-    (he : e.ValidRefs p) (hns : e.NoSubst fm) (hwf : p.WF) :
+    (hwf : p.WF) :
     (e.subst p vm fm).program.WF := by
   intro m hnests
+  let p' := (e.subst p vm fm).program
+  let fm' := (e.subst p vm fm).funMap
   by_cases hm : m < p.size
-  · exact hwf <| Program.nests_of_nests_in_subst_of_lt hm hp hnests
+  · exact hwf <| nests_of_nests_in_subst_of_lt hm hp hnests
   · simp only [Nat.not_lt] at hm
-    have hvalid' := Program.validSubst_subst hvm hfm hp h he hns
-    have hfm' : (e.subst p vm fm).funMap.Valid := FunMap.valid_subst hfm
+    have hvalid' : p'.ValidSubst vm.extend fm' := validSubst_subst hvm hfm hp h
+    have hfm' : fm'.Valid := FunMap.valid_subst hfm
     replace ⟨k, l, hk, hl, hfmk, hfml, hnests⟩ :=
-      Program.nests_of_nests_in_subst_of_ge hvm hfm hp h he hns hm hnests
+      nests_of_nests_in_subst_of_ge hvm hfm hp h hm hnests
     obtain rfl : k = l := hfm'.inj (by lia) (by lia) (by lia) (by lia) (hfmk ▸ hfml)
     exact hwf hnests
 
@@ -1278,9 +1274,8 @@ theorem subst_types {c : Computation} {t : Ty} {n : Nat} {v : Expr}
   · exact FunMap.mk_types
 
 theorem subst_wf {c : Computation} {n : Nat} {v : Expr} (hp : c.ValidRefs)
-    (he : c.expr.ValidRefs c.toProgram) (hv : v.ValidRefs c.toProgram)
-    (h : c.WF) : (c.subst n v).WF :=
+    (hv : v.ValidRefs c.toProgram) (h : c.WF) : (c.subst n v).WF :=
   Program.subst_wf (VarMap.valid_mk hv) FunMap.valid_mk hp
-    Program.validSubst_mk he Expr.noSubst_mk h
+    Program.validSubst_mk h
 
 end Computation

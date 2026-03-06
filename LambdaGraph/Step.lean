@@ -117,6 +117,6 @@ theorem preservation_wf {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
     try solve | cases ht <;> apply_rules
   | app p n e hn hve =>
     have .app _ _ t' htf hte := ht
-    exact subst_wf htp.validRefs (htp.validRefs hn) hte.validRefs hwf
+    exact subst_wf htp.validRefs hte.validRefs hwf
 
 end Computation
