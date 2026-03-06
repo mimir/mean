@@ -2,20 +2,32 @@ import LambdaGraph.Subst
 
 /-- The small-step reduction relation. -/
 inductive Computation.Step : Computation → Computation → Prop where
-  | app (p : Program) (n : Nat) (e : Expr) (_ : n < p.size) :
+  | appFn (p : Program) (n : Nat) (e : Expr) (_ : n < p.size) :
     e.Value → Step ⟨p, .app (.fn n) e⟩ (.subst ⟨p, p.fn[n]⟩ n e)
-  | appL (p p' : Program) (f f' e : Expr) :
-    Step ⟨p, f⟩ ⟨p', f'⟩ → Step ⟨p, f.app e⟩ ⟨p', f'.app e⟩
-  | appR (p p' : Program) (f e e' : Expr) :
-    f.Value → Step ⟨p, e⟩ ⟨p', e'⟩ → Step ⟨p, f.app e⟩ ⟨p', f.app e'⟩
+  | appOp (p : Program) (f : Op) (x y : Int) :
+    Step ⟨p, .app f (.pair x y)⟩ ⟨p, ⟦f⟧ x y⟩
+  | appCmp (p : Program) (f : Cmp) (x y : Int) :
+    Step ⟨p, .app f (.pair x y)⟩ ⟨p, ⟦f⟧ x y⟩
+  | appLogic (p : Program) (f : Logic) (b₁ b₂ : Bool) :
+    Step ⟨p, .app f (.pair b₁ b₂)⟩ ⟨p, ⟦f⟧ b₁ b₂⟩
+  | binL (p p' : Program) (k : BinKind) (e₁ e₁' e₂ : Expr) :
+    Step ⟨p, e₁⟩ ⟨p', e₁'⟩ → Step ⟨p, e₁.bin k e₂⟩ ⟨p', e₁'.bin k e₂⟩
+  | binR (p p' : Program) (k : BinKind) (e₁ e₂ e₂' : Expr) :
+    e₁.Value → Step ⟨p, e₂⟩ ⟨p', e₂'⟩ → Step ⟨p, e₁.bin k e₂⟩ ⟨p', e₁.bin k e₂'⟩
   | condT (p : Program) (et ef : Expr) :
-    Step ⟨p, (.cond (.bool true) et ef)⟩ ⟨p, et⟩
+    Step ⟨p, (.cond true et ef)⟩ ⟨p, et⟩
   | condF (p : Program) (et ef : Expr) :
-    Step ⟨p, (.cond (.bool false) et ef)⟩ ⟨p, ef⟩
+    Step ⟨p, (.cond false et ef)⟩ ⟨p, ef⟩
   | condC (p p' : Program) (c c' et ef : Expr) :
     Step ⟨p, c⟩ ⟨p', c'⟩ → Step ⟨p, c.cond et ef⟩ ⟨p', c'.cond et ef⟩
+  | proj0 (p : Program) (e₁ e₂ : Expr) :
+    e₁.Value → e₂.Value → Step ⟨p, .proj (.pair e₁ e₂) 0⟩ ⟨p, e₁⟩
+  | proj1 (p : Program) (e₁ e₂ : Expr) :
+    e₁.Value → e₂.Value → Step ⟨p, .proj (.pair e₁ e₂) 1⟩ ⟨p, e₂⟩
+  | proj (p p' : Program) (e e' : Expr) (i : Fin 2) :
+    Step ⟨p, e⟩ ⟨p', e'⟩ → Step ⟨p, e.proj i⟩ ⟨p', e'.proj i⟩
 
-notation:40 p:41 " ⇒ " p':41 => Computation.Step p p'
+notation:40 c:41 " ⇒ " c':41 => Computation.Step c c'
 
 /-- The reflexive-transitive closure of the reduction relation. -/
 inductive Computation.Steps : Computation → Computation → Prop where
@@ -58,50 +70,105 @@ theorem progress {c : Computation} {t : Ty} (hte : c.toProgram ⊢ c.expr : t)
   induction hte with
   | var n hn => simp [Closed] at hc
   | fn n hn => left; constructor
+  | const c => left; constructor
   | app f e t₁ t₂ htf hte ihf ihe =>
     right
-    obtain ⟨hcf, hce⟩ := Expr.app_closed_iff.mp hc
-    rcases ihf hcf with hvf | ⟨p', hp⟩
-    · rcases ihe hce with hve | ⟨p', hp⟩
-      · obtain ⟨n, rfl⟩ := value_types_fn htf hvf
-        cases htf
-        solve_by_elim [Exists.intro]
-      · exact ⟨_, Step.appR _ _ _ _ _ hvf hp⟩
-    · exact ⟨_, Step.appL _ _ _ _ _ hp⟩
-  | bool b => left; constructor
+    obtain ⟨hcf, hce⟩ := Expr.bin_closed_iff.mp hc
+    obtain hvf | ⟨c', hs⟩ := ihf hcf
+    · obtain hve | ⟨c', hs⟩ := ihe hce
+      · obtain ⟨n, rfl⟩ | ⟨f, rfl⟩ | ⟨f, rfl⟩ | ⟨f, rfl⟩ :=
+          Expr.value_types_fn htf hvf
+        · have .fn _ hn := htf
+          exact ⟨_, Step.appFn _ _ _ hn hve⟩
+        · have .const _ := htf
+          obtain ⟨v₁, v₂, rfl, hv₁, hv₂⟩ := Expr.value_types_prod hte hve
+          have .pair _ _ _ _ ht₁ ht₂ := hte
+          obtain ⟨x, rfl⟩ := Expr.value_types_int ht₁ hv₁
+          obtain ⟨y, rfl⟩ := Expr.value_types_int ht₂ hv₂
+          exact ⟨_, Step.appOp _ _ _ _⟩
+        · have .const _ := htf
+          obtain ⟨v₁, v₂, rfl, hv₁, hv₂⟩ := Expr.value_types_prod hte hve
+          have .pair _ _ _ _ ht₁ ht₂ := hte
+          obtain ⟨x, rfl⟩ := Expr.value_types_int ht₁ hv₁
+          obtain ⟨y, rfl⟩ := Expr.value_types_int ht₂ hv₂
+          exact ⟨_, Step.appCmp _ _ _ _⟩
+        · have .const _ := htf
+          obtain ⟨v₁, v₂, rfl, hv₁, hv₂⟩ := Expr.value_types_prod hte hve
+          have .pair _ _ _ _ ht₁ ht₂ := hte
+          obtain ⟨b₁, rfl⟩ := Expr.value_types_bool ht₁ hv₁
+          obtain ⟨b₂, rfl⟩ := Expr.value_types_bool ht₂ hv₂
+          exact ⟨_, Step.appLogic _ _ _ _⟩
+      · exact ⟨_, Step.binR _ _ _ _ _ _ hvf hs⟩
+    · exact ⟨_, Step.binL _ _ _ _ _ _ hs⟩
+  | pair e₁ e₂ t₁ t₂ ht₁ ht₂ ih₁ ih₂ =>
+    obtain ⟨hcf, hce⟩ := Expr.bin_closed_iff.mp hc
+    obtain hv₁ | ⟨c', hs⟩ := ih₁ hcf
+    · obtain hv₂ | ⟨c', hs⟩ := ih₂ hce
+      · exact Or.inl (.pair _ _ hv₁ hv₂)
+      · exact Or.inr ⟨_, Step.binR _ _ _ _ _ _ hv₁ hs⟩
+    · exact Or.inr ⟨_, Step.binL _ _ _ _ _ _ hs⟩
   | cond c et ef t htc htet htef ihc ihet ihef =>
     right
     obtain ⟨hcc, hcet, hcef⟩ := Expr.cond_closed_iff.mp hc
-    rcases ihc hcc with hvc | ⟨p', hp⟩
-    · rcases value_types_bool htc hvc with ⟨_ | _, rfl⟩ <;> repeat constructor
-    · exact ⟨_, Step.condC _ _ _ _ _ _ hp⟩
+    obtain hvc | ⟨c', hs⟩ := ihc hcc
+    · obtain ⟨_ | _, rfl⟩ := Expr.value_types_bool htc hvc <;>
+        repeat constructor
+    · exact ⟨_, Step.condC _ _ _ _ _ _ hs⟩
+  | proj0 e t₁ t₂ ht ih =>
+    right
+    have hc := Expr.proj_closed_iff.mp hc
+    obtain hv | ⟨c', hs⟩ := ih hc
+    · obtain ⟨v₁, v₂, rfl, hv₁, hv₂⟩ := Expr.value_types_prod ht hv
+      exact ⟨_, Step.proj0 _ _ _ hv₁ hv₂⟩
+    · exact ⟨_, Step.proj _ _ _ _ _ hs⟩
+  | proj1 e t₁ t₂ ht ih =>
+    right
+    have hc := Expr.proj_closed_iff.mp hc
+    obtain hv | ⟨c', hs⟩ := ih hc
+    · obtain ⟨v₁, v₂, rfl, hv₁, hv₂⟩ := Expr.value_types_prod ht hv
+      exact ⟨_, Step.proj1 _ _ _ hv₁ hv₂⟩
+    · exact ⟨_, Step.proj _ _ _ _ _ hs⟩
 
 theorem preservation_types {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
   (hs : c ⇒ c') : ⊢ c' : t := by
   obtain ⟨htp, ht⟩ := ht
   induction hs generalizing t with
-  | app p n e h hv =>
+  | appFn p n e h hv =>
     have .app _ _ t' _ htf hte := ht
-    cases htf
+    have .fn _ hn := htf
     solve_by_elim [subst_types]
-  | appL p p' f f' e hs ih =>
+  | appOp p f x y =>
     have .app _ _ t' _ htf hte := ht
-    obtain ⟨htp', htf'⟩ := ih htp htf
-    constructor
-    · exact htp'
-    · dsimp only at *
-      constructor
-      · exact htf'
-      · exact types_of_step hte hs
-  | appR p p' f e e' hvf hs ih =>
+    have .const _ := htf
+    solve_by_elim
+  | appCmp p f x y =>
     have .app _ _ t' _ htf hte := ht
-    obtain ⟨htp', hte'⟩ := ih htp hte
-    constructor
-    · exact htp'
-    · dsimp only at *
+    have .const _ := htf
+    solve_by_elim
+  | appLogic p f b₁ b₂ =>
+    have .app _ _ t' _ htf hte := ht
+    have .const _ := htf
+    solve_by_elim
+  | binL p p' k e₁ e₁' e₂ hs ih =>
+    cases ht <;> (
+      obtain ⟨htp', ht₁'⟩ := ih htp ‹_›
       constructor
-      · exact types_of_step htf hs
-      · exact hte'
+      · exact htp'
+      · dsimp only at *
+        constructor
+        · exact ht₁'
+        · exact types_of_step ‹_› hs
+    )
+  | binR p p' k e₁ e₂ e₂' hv₁ hs ih =>
+    cases ht <;> (
+      obtain ⟨htp', ht₂'⟩ := ih htp ‹_›
+      constructor
+      · exact htp'
+      · dsimp only at *
+        constructor
+        · exact types_of_step ‹_› hs
+        · exact ht₂'
+    )
   | condT p et ef => cases ht; constructor <;> assumption
   | condF p et ef => cases ht; constructor <;> assumption
   | condC p p' c c' et ef hs ih =>
@@ -114,13 +181,27 @@ theorem preservation_types {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
       · exact htc'
       · exact types_of_step htet hs
       · exact types_of_step htef hs
+  | proj0 p e₁ e₂ hv₁ hv₂ =>
+    have .proj0 _ _ t' ht := ht
+    have .pair _ _ _ _ ht₁ ht₂ := ht
+    solve_by_elim
+  | proj1 p e₁ e₂ hv₁ hv₂ =>
+    have .proj1 _ _ t' ht := ht
+    have .pair _ _ _ _ ht₁ ht₂ := ht
+    solve_by_elim
+  | proj p p' e e' i hs ih =>
+    cases ht <;> (
+      simp_all only [forall_const, Fin.isValue]
+      obtain ⟨htp', hte'⟩ := ih ‹_›
+      solve_by_elim
+    )
 
 theorem preservation_wf {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
     (hwf : c.WF) (hs : c ⇒ c') : c'.WF := by
   obtain ⟨htp, ht⟩ := ht
   induction hs generalizing t with
     try solve | cases ht <;> apply_rules
-  | app p n e hn hve =>
+  | appFn p n e hn hve =>
     have .app _ _ t' _ htf hte := ht
     exact subst_wf htp.validRefs hte.validRefs hwf
 

@@ -10,11 +10,12 @@ occurs free.
 inductive Expr.Free (p : Program) (n : Nat) : Expr → Prop where
   | var : Free p n (.var n)
   | fn (m : Nat) (_ : m < p.size) : n ≠ m → Free p n p.fn[m] → Free p n (.fn m)
-  | appL (f e : Expr) : Free p n f → Free p n (.app f e)
-  | appR (f e : Expr) : Free p n e → Free p n (.app f e)
-  | condC (c et ef : Expr) : Free p n c → Free p n (.cond c et ef)
-  | condT (c et ef : Expr) : Free p n et → Free p n (.cond c et ef)
-  | condF (c et ef : Expr) : Free p n ef → Free p n (.cond c et ef)
+  | binL (k : BinKind) (e₁ e₂ : Expr) : Free p n e₁ → Free p n (e₁.bin k e₂)
+  | binR (k : BinKind) (e₁ e₂ : Expr) : Free p n e₂ → Free p n (e₁.bin k e₂)
+  | condC (c et ef : Expr) : Free p n c → Free p n (c.cond et ef)
+  | condT (c et ef : Expr) : Free p n et → Free p n (c.cond et ef)
+  | condF (c et ef : Expr) : Free p n ef → Free p n (c.cond et ef)
+  | proj (e : Expr) (i : Fin 2) : Free p n e → Free p n (e.proj i)
 
 /--
 The nesting relation between functions in a program.
@@ -70,7 +71,7 @@ This relation can also be read as post-dominance with end `k`.
 def Program.Dominates (p : Program) (m n k : Nat) : Prop := ¬m ⟶[p, n]* k
 
 /-- An expression is closed if it has no free variables. -/
-def Expr.Closed (p : Program) (e : Expr) : Prop := ∀ n, ¬e.Free p n
+def Expr.Closed (p : Program) (e : Expr) : Prop := ∀ ⦃n⦄, ¬e.Free p n
 
 /-- A program is well-formed if no function nests itself. -/
 def Program.WF (p : Program) : Prop := ∀ ⦃n⦄, n ⊁[p] n
@@ -88,15 +89,15 @@ def Computation.Closed (c : Computation) : Prop := c.expr.Closed c.toProgram
 
 @[simp]
 theorem Expr.not_closed_var {p : Program} {n : Nat} : ¬(Expr.var n).Closed p :=
-  fun h => h n .var
+  fun h => h .var
 
 @[simp]
-theorem Expr.app_closed_iff {p : Program} {f e : Expr} :
-    (f.app e).Closed p ↔ f.Closed p ∧ e.Closed p := by
+theorem Expr.bin_closed_iff {p : Program} {k : BinKind} {e₁ e₂ : Expr} :
+    (e₁.bin k e₂).Closed p ↔ e₁.Closed p ∧ e₂.Closed p := by
   constructor
   · intro h
-    constructor <;> solve_by_elim [Expr.Free.appL, Expr.Free.appR]
-  · rintro ⟨hf, he⟩ n (- | -) <;> solve_by_elim
+    constructor <;> solve_by_elim [Free.binL, Free.binR]
+  · rintro ⟨h₁, h₂⟩ n (- | -) <;> solve_by_elim
 
 @[simp]
 theorem Expr.cond_closed_iff {p : Program} {c et ef : Expr} :
@@ -106,6 +107,16 @@ theorem Expr.cond_closed_iff {p : Program} {c et ef : Expr} :
     open Expr.Free in
     and_intros <;> solve_by_elim [condC, condT, condF]
   · rintro ⟨hc, het, hef⟩ n (- | - | -) <;> solve_by_elim
+
+@[simp]
+theorem Expr.proj_closed_iff {p : Program} {e : Expr} {i : Fin 2} :
+    (e.proj i).Closed p ↔ e.Closed p := by
+  constructor
+  · intro h n hf
+    exact h (.proj _ _ hf)
+  · intro h n hf
+    have .proj _ _ hf := hf
+    exact h hf
 
 @[grind →]
 theorem Expr.lt_size_of_free {p : Program} {e : Expr} {n : Nat}
@@ -180,7 +191,7 @@ theorem Expr.free_of_localVar {p : Program} {e : Expr} {n : Nat}
   open Free in
   induction h with
     first | contradiction
-          | solve_by_elim [var, appL, appR, condC, condT, condF]
+          | solve_by_elim [var, binL, binR, condC, condT, condF, proj]
 
 theorem Expr.free_of_localFn_of_free {p : Program} {e : Expr} {m n : Nat}
     (hm : m < p.size) (hne : n ≠ m) (hlf : e.LocalFn m)
@@ -190,7 +201,7 @@ theorem Expr.free_of_localFn_of_free {p : Program} {e : Expr} {m n : Nat}
   open Free in
   induction hlf with
     first | contradiction
-          | solve_by_elim [var, appL, appR, condC, condT, condF]
+          | solve_by_elim [var, binL, binR, condC, condT, condF, proj]
 
 theorem Program.free_in_fn_of_succ {p : Program} {m n k : Nat} (hm : m < p.size)
     (hn : n < p.size) (hne : k ≠ n) (hs : m ⟶[p] n) (hf : p.fn[n].Free p k) :
@@ -204,18 +215,12 @@ theorem Expr.free_iff {p : Program} {e : Expr} {n : Nat} :
         e.LocalFn m ∧ m ⟶[p, n]* k ∧ p.fn[k].LocalVar n := by
   constructor
   · intro h
-    induction h with
-    | var => left; constructor
+    induction h with try grind
     | fn m hm hne hf ih =>
       refine Or.inr ⟨m, ?_⟩
       obtain hlv | ⟨k, l, hl, hlf, hp, hlv⟩ := ih
       · exact ⟨m, hm, .fn, .refl _ hne, hlv⟩
       · exact ⟨l, hl, .fn, .step _ _ _ hne ⟨hm, hlf⟩ hp, hlv⟩
-    | appL => grind [Local.appL]
-    | appR => grind [Local.appR]
-    | condC => grind [Local.condC]
-    | condT => grind [Local.condT]
-    | condF => grind [Local.condF]
   · rintro (hlv | ⟨m, k, hk, hlf, hp, hlv⟩)
     · exact free_of_localVar hlv
     · have hf : p.fn[k].Free p n := free_of_localVar hlv
