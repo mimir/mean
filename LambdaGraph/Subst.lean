@@ -59,7 +59,8 @@ For a function map to be well-typed, replacement functions must have the same
 type as their original.
 -/
 def FunMap.Types (p : Program) (fm : FunMap p.size) : Prop :=
-  ∀ i (_ : i < p.size) m, fm[i] = some m → ∃ (_ : m < p.size), p.ty[i] = p.ty[m]
+  ∀ i (_ : i < p.size) m,
+    fm[i] = some m → ∃ (_ : m < p.size), p.ty[i] = p.ty[m] ∧ p.ret[i] = p.ret[m]
 
 /-- The result of a substitution. -/
 structure SubstResult (p : Program) (fm : FunMap p.size) : Type where
@@ -93,7 +94,7 @@ noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
           let m' := p.size
           let vm₁ := vm.update m
           let fm₁ := fm.update m
-          let p₁ := p.push (recurse m') p.ty[m] -- temporary body that is always well-typed
+          let p₁ := p.push (recurse m') p.ty[m] p.ret[m] -- temporary body that is always well-typed
           have hsize₁ : p.size ≤ p₁.size := by simp [p₁]
           have hum₁ : fm₁.unmapped < fm.unmapped := by
             simp only [FunMap.unmapped, FunMap.update, reduceCtorEq,
@@ -153,9 +154,30 @@ noncomputable def Computation.subst (p : Computation) (n : Nat) (v : Expr) :
   ⟨p', e'⟩
 
 @[simp]
+theorem Program.subst_fn_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
+    let ⟨p', _, _, hsize, _⟩ := e.subst p vm fm
+    p'.fn[n] = p.fn[n] := by
+  fun_induction Expr.subst <;> dsimp only at *
+  next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
+      p₃ f'' hsize hum h ih =>
+    rw [hs₂] at ih
+    grind
+  next p vm fm f e p₁ f' fm₁ hsize₁ hum₁ hs₁ p₂ e' fm₂ hsize₂ hum₂ hs₂ h ihf ihe =>
+    rw [hs₁] at ihf
+    rw [hs₂] at ihe
+    grind
+  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
+      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
+    rw [hs₁] at ihc
+    rw [hs₂] at ihet
+    rw [hs₃] at ihef
+    grind
+
+@[simp]
 theorem Program.subst_ty_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
-    let ⟨p', _, fm', hsize, _⟩ := e.subst p vm fm
+    let ⟨p', _, _, hsize, _⟩ := e.subst p vm fm
     p'.ty[n] = p.ty[n] := by
   fun_induction Expr.subst <;> dsimp only at *
   next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
@@ -174,10 +196,10 @@ theorem Program.subst_ty_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
     grind
 
 @[simp]
-theorem Program.subst_fn_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
+theorem Program.subst_ret_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
-    let ⟨p', _, _, hsize, _⟩ := (e.subst p vm fm)
-    p'.fn[n] = p.fn[n] := by
+    let ⟨p', _, _, hsize, _⟩ := e.subst p vm fm
+    p'.ret[n] = p.ret[n] := by
   fun_induction Expr.subst <;> dsimp only at *
   next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
       p₃ f'' hsize hum h ih =>
@@ -199,6 +221,7 @@ theorem Program.prefix_subst {p : Program} {e : Expr} {vm : VarMap p.size}
   constructor
   · exact subst_fn_eq_of_lt
   · exact subst_ty_eq_of_lt
+  · exact subst_ret_eq_of_lt
   · exact (e.subst p vm fm).size_ge
 
 grind_pattern Program.prefix_subst => (e.subst p vm fm).program
@@ -275,11 +298,11 @@ theorem mk_types {p : Program} {n : Nat} {v : Expr} (hn : n < p.size)
 
 theorem update_types {p : Program} {vm : VarMap p.size} {b : Expr} {m : Nat}
     (hm : m < p.size) (h : vm.Types p) :
-    (vm.update m hm).Types (p.push b p.ty[m]) := by
+    (vm.update m hm).Types (p.push b p.ty[m] p.ret[m]) := by
   intro i hi
   by_cases i = p.size
   · simp only [getElem_update_size, Vector.getElem_push_eq, *]
-    have : p.ty[m] = (p.push b p.ty[m]).ty[p.size] := by simp
+    have : p.ty[m] = (p.push b p.ty[m] p.ret[m]).ty[p.size] := by simp
     conv => arg 3; rw [this]
     constructor
   · replace hi : i < p.size := by lia
@@ -287,7 +310,7 @@ theorem update_types {p : Program} {vm : VarMap p.size} {b : Expr} {m : Nat}
     by_cases m = i
     · subst i
       simp only [getElem_update_eq]
-      have : p.ty[m] = (p.push b p.ty[m]).ty[p.size] := by simp
+      have : p.ty[m] = (p.push b p.ty[m] p.ret[m]).ty[p.size] := by simp
       conv => arg 3; rw [this]
       constructor
     · simpa [*] using Expr.types_in_push_of_types (h i hi)
@@ -340,7 +363,7 @@ theorem mk_types {p : Program} : (mk _).Types p := by
 
 theorem update_types {p : Program} {fm : FunMap p.size} {b : Expr} {m : Nat}
     (hm : m < p.size) (h : fm.Types p) :
-    (fm.update m hm).Types (p.push b p.ty[m]) := by
+    (fm.update m hm).Types (p.push b p.ty[m] p.ret[m]) := by
   intro i hi m' heq
   by_cases i = p.size
   · grind [update]
@@ -400,18 +423,19 @@ theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
     have .fn _ _ := ht
     have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
     subst hp₂
-    have : p.ty[m] = p₃.ty[p.size] := by grind [Program.subst_ty_eq_of_lt]
-    rw [this]
+    have hty : p.ty[m] = p₃.ty[p.size] := by grind [Program.subst_ty_eq_of_lt]
+    have hret : p.ret[m] = p₃.ret[p.size] := by grind [Program.subst_ret_eq_of_lt]
+    rw [hty, hret]
     constructor
   next p vm fm m hm m' hm' h =>
     have .fn _ _ := ht
-    obtain ⟨_, heq⟩ := hfm _ ‹m < p.size› m' hm'
-    rw [heq]
+    obtain ⟨_, hty, hret⟩ := hfm _ ‹m < p.size› m' hm'
+    rw [hty, hret]
     constructor
   next => exact ht
   next =>
-    have .app _ _ t' htf hte := ht
-    apply Types.app _ _ t' <;>
+    have .app _ _ t₁ t₂ htf hte := ht
+    apply Types.app _ _ t₁ t₂ <;>
       grind [VarMap.extend_types, FunMap.subst_types]
   next => exact ht
   next =>
@@ -427,12 +451,12 @@ theorem Program.subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
           | dsimp only at *
   next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
       p₃ f'' hsize hum h ih =>
+    have heq : p.ret[m] = (p.push (.recurse m') p.ty[m] p.ret[m]).ret[m'] := by
+      simp [m']
     have ht₁ : ⊢ p₁ := by
       apply types_push ht
-      constructor
-      · constructor
-        lia
-      · constructor
+      conv => rhs; rw [heq]
+      constructor <;> constructor
     have hvm₁ : vm₁.Types p₁ := VarMap.update_types hm hvm
     have hfm₁ : fm₁.Types p₁ := FunMap.update_types hm hfm
     have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
@@ -447,7 +471,8 @@ theorem Program.subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
       apply Expr.types_in_setBody_of_types
       simp only [Vector.getElem_set_self]
       apply Expr.subst_types
-      · exact Expr.types_in_push_of_types (ht hm)
+      · rw [prefix_subst.ret_eq (by lia), ← heq]
+        exact Expr.types_in_push_of_types (ht hm)
       · exact hvm₁
       · exact hfm₁
     · rw [Vector.getElem_set_ne _ _ ‹m' ≠ i›]
@@ -878,7 +903,7 @@ theorem Program.validSubst_mk {p : Program} {n : Nat} {v : Expr} :
 theorem Program.validSubst_push_recurse {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {i : Nat} (hi : i < p.size) (hfm : fm.Valid)
     (hp : p.ValidRefs) (h : p.ValidSubst vm fm) :
-    (p.push (.recurse p.size) p.ty[i]).ValidSubst
+    (p.push (.recurse p.size) p.ty[i] p.ret[i]).ValidSubst
       (vm.update i hi) (fm.update i hi) := by
   constructor
   case fn_localProvenance =>

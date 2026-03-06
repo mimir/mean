@@ -23,24 +23,26 @@ abbrev Expr.recurse (n : Nat) : Expr := (fn n).app (var n)
 inductive Ty where
   | bot
   | bool
-  | cn (t : Ty)
+  | fn (t₁ t₂ : Ty)
 
 /--
 A collection of labelled lambda terms.
 
-A program is represented as an array of function bodies and an array of the
-types of their corresponding variables.
+A program is represented as an array of function bodies and arrays of their
+corresponding argument and return types.
 -/
 structure Program where
   size : Nat
   /-- Maps each label to the corresponding function body. -/
   fn : Vector Expr size
-  /-- Maps each label to the type of the corresponding function's argument. -/
+  /-- Maps each label to the corresponding function's argument type. -/
   ty : Vector Ty size
+  /-- Maps each label to the corresponding function's return type. -/
+  ret : Vector Ty size
 
 /-- Extends a program by a new function with a given body and argument type. -/
-abbrev Program.push (p : Program) (b : Expr) (t : Ty) : Program :=
-  ⟨_, p.fn.push b, p.ty.push t⟩
+abbrev Program.push (p : Program) (b : Expr) (t₁ t₂ : Ty) : Program :=
+  ⟨_, p.fn.push b, p.ty.push t₁, p.ret.push t₂⟩
 
 /-- Sets a function body in a program to a new expression. -/
 abbrev Program.setBody (p : Program) (i : Nat) (b : Expr)
@@ -52,20 +54,18 @@ structure Program.Prefix (p p' : Program) where
   size_le : p.size ≤ p'.size
   fn_eq : ∀ {m} (_ : m < p.size), p'.fn[m] = p.fn[m]
   ty_eq : ∀ {m} (_ : m < p.size), p'.ty[m] = p.ty[m]
+  ret_eq : ∀ {m} (_ : m < p.size), p'.ret[m] = p.ret[m]
 
 attribute [grind →] Program.Prefix.size_le
 
-grind_pattern Program.Prefix.fn_eq =>
-  p.Prefix p', m < p.size, p.fn[m]
+grind_pattern Program.Prefix.fn_eq => p.Prefix p', m < p.size, p.fn[m]
+grind_pattern Program.Prefix.fn_eq => p.Prefix p', m < p.size, p'.fn[m]
 
-grind_pattern Program.Prefix.fn_eq =>
-  p.Prefix p', m < p.size, p'.fn[m]
+grind_pattern Program.Prefix.ty_eq => p.Prefix p', m < p.size, p.ty[m]
+grind_pattern Program.Prefix.ty_eq => p.Prefix p', m < p.size, p'.ty[m]
 
-grind_pattern Program.Prefix.ty_eq =>
-  p.Prefix p', m < p.size, p.ty[m]
-
-grind_pattern Program.Prefix.ty_eq =>
-  p.Prefix p', m < p.size, p'.ty[m]
+grind_pattern Program.Prefix.ret_eq => p.Prefix p', m < p.size, p.ret[m]
+grind_pattern Program.Prefix.ret_eq => p.Prefix p', m < p.size, p'.ret[m]
 
 /-- A computation consists of a program and an expression to be evaluated. -/
 @[pp_using_anonymous_constructor]
@@ -87,9 +87,9 @@ well-typed if their labels are in bounds.
 -/
 inductive Expr.Types (p : Program) : Expr → Ty → Prop where
   | var (n : Nat) (_ : n < p.size) : Types p (var n) p.ty[n]
-  | fn (n : Nat) (_ : n < p.size) : Types p (fn n) p.ty[n].cn
-  | app (f e : Expr) (t : Ty) :
-    Types p f t.cn → Types p e t → Types p (f.app e) .bot
+  | fn (n : Nat) (_ : n < p.size) : Types p (fn n) (p.ty[n].fn p.ret[n])
+  | app (f e : Expr) (t₁ t₂ : Ty) :
+    Types p f (t₁.fn t₂) → Types p e t₁ → Types p (f.app e) t₂
   | bool (b : Bool) : Types p (bool b) .bool
   | cond (c et ef : Expr) (t : Ty) :
     Types p c .bool → Types p et t → Types p ef t → Types p (c.cond et ef) t
@@ -101,7 +101,8 @@ The typing predicate for programs.
 
 A program is well-typed if all function bodies are well-typed.
 -/
-def Program.Types (p : Program) : Prop := ∀ {n}, (_ : n < p.size) → p ⊢ p.fn[n] : .bot
+def Program.Types (p : Program) : Prop :=
+  ∀ ⦃n⦄ (_ : n < p.size), p ⊢ p.fn[n] : p.ret[n]
 
 notation:60 "⊢ " p:61 => Program.Types p
 
@@ -117,8 +118,8 @@ structure Computation.Types (p : Computation) (t : Ty) : Prop where
 
 notation:60 "⊢ " p:61 " : " t:61 => Computation.Types p t
 
-theorem value_types_cn {p : Program} {v : Expr} {t : Ty} (h : p ⊢ v : t.cn) :
-    v.Value → ∃ n, v = .fn n
+theorem value_types_fn {p : Program} {v : Expr} {t₁ t₂ : Ty}
+    (h : p ⊢ v : t₁.fn t₂) : v.Value → ∃ n, v = .fn n
   | .fn n => by simp
   | .bool b => nomatch h
 
@@ -283,11 +284,11 @@ theorem Program.prefix_trans {p p' p'' : Program} (h : p.Prefix p')
     (h' : p'.Prefix p'') : p.Prefix p'' := by
   constructor <;> grind
 
-theorem Program.prefix_push {p : Program} {b : Expr} {t : Ty} :
-    p.Prefix (p.push b t) := by
+theorem Program.prefix_push {p : Program} {b : Expr} {t₁ t₂ : Ty} :
+    p.Prefix (p.push b t₁ t₂) := by
   constructor <;> simp_all
 
-grind_pattern Program.prefix_push => p.push b t
+grind_pattern Program.prefix_push => p.push b t₁ t₂
 
 theorem Expr.types_in_prefix_iff {p p' : Program} {e : Expr} {t : Ty}
     (he : e.ValidRefs p) (h : p.Prefix p') : p' ⊢ e : t ↔ p ⊢ e : t := by
@@ -296,16 +297,16 @@ theorem Expr.types_in_prefix_iff {p p' : Program} {e : Expr} {t : Ty}
 grind_pattern Expr.types_in_prefix_iff => p.Prefix p', p ⊢ e : t
 grind_pattern Expr.types_in_prefix_iff => p.Prefix p', p' ⊢ e : t
 
-theorem Expr.types_in_push_of_types {p : Program} {e b : Expr} {t t' : Ty}
-    (h : p ⊢ e : t) : p.push b t' ⊢ e : t :=
+theorem Expr.types_in_push_of_types {p : Program} {e b : Expr} {t t₁ t₂ : Ty}
+    (h : p ⊢ e : t) : p.push b t₁ t₂ ⊢ e : t :=
   (types_in_prefix_iff h.validRefs Program.prefix_push).mpr h
 
 theorem Expr.types_in_setBody_of_types {p : Program} {e b : Expr} {t : Ty}
     {i : Nat} (hi : i < p.size) (h : p ⊢ e : t) : p.setBody i b ⊢ e : t := by
   induction h with constructor <;> assumption
 
-theorem Program.types_push {p : Program} {b : Expr} {t' : Ty} (hp : ⊢ p)
-    (hf : p.push b t' ⊢ b : .bot) : ⊢ p.push b t' := by
+theorem Program.types_push {p : Program} {b : Expr} {t₁ t₂ : Ty} (hp : ⊢ p)
+    (hf : p.push b t₁ t₂ ⊢ b : t₂) : ⊢ p.push b t₁ t₂ := by
   intro i hi
   by_cases i = p.size
   · simp [*]
@@ -314,13 +315,13 @@ theorem Program.types_push {p : Program} {b : Expr} {t' : Ty} (hp : ⊢ p)
     simp [push, *]
     exact hp hi
 
-theorem Expr.validRefs_in_push {p : Program} {e b : Expr} {t : Ty}
-    (h : e.ValidRefs p) : e.ValidRefs (p.push b t) :=
+theorem Expr.validRefs_in_push {p : Program} {e b : Expr} {t₁ t₂ : Ty}
+    (h : e.ValidRefs p) : e.ValidRefs (p.push b t₁ t₂) :=
   bounded_of_ge (by simp) h
 
-theorem Program.validRefs_push {p : Program} {b : Expr} {t : Ty}
-    (h : p.ValidRefs) (hb : b.ValidRefs (p.push b t)) :
-    (p.push b t).ValidRefs := by
+theorem Program.validRefs_push {p : Program} {b : Expr} {t₁ t₂ : Ty}
+    (h : p.ValidRefs) (hb : b.ValidRefs (p.push b t₁ t₂)) :
+    (p.push b t₁ t₂).ValidRefs := by
   intro i hi n r hl
   by_cases i = p.size
   · simp only [Vector.getElem_push_eq, *] at hl

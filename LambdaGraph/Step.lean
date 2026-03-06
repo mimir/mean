@@ -41,10 +41,15 @@ theorem ty_eq_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
     (h : c ⇒ c') : c.ty[n] = c'.ty[n]'(lt_size_of_step hn h) := by
   induction h with simp [subst, Program.subst_ty_eq_of_lt hn, *]
 
+theorem ret_eq_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
+    (h : c ⇒ c') : c.ret[n] = c'.ret[n]'(lt_size_of_step hn h) := by
+  induction h with simp [subst, Program.subst_ret_eq_of_lt hn, *]
+
 theorem types_of_step {c c' : Computation} {e : Expr} {t : Ty}
     (ht : c.toProgram ⊢ e : t) (hs : c ⇒ c') : c'.toProgram ⊢ e : t := by
-  induction ht with
-    (try rw [ty_eq_of_step ‹_› hs]) <;> constructor <;> assumption
+  induction ht with try constructor <;> assumption
+  | var n hn => rw [ty_eq_of_step hn hs]; constructor
+  | fn n hn => rw [ty_eq_of_step hn hs, ret_eq_of_step hn hs]; constructor
 
 theorem progress {c : Computation} {t : Ty} (hte : c.toProgram ⊢ c.expr : t)
     (hc : c.Closed) : c.expr.Value ∨ ∃ c', c ⇒ c' := by
@@ -53,12 +58,12 @@ theorem progress {c : Computation} {t : Ty} (hte : c.toProgram ⊢ c.expr : t)
   induction hte with
   | var n hn => simp [Closed] at hc
   | fn n hn => left; constructor
-  | app f e t htf hte ihf ihe =>
+  | app f e t₁ t₂ htf hte ihf ihe =>
     right
     obtain ⟨hcf, hce⟩ := Expr.app_closed_iff.mp hc
     rcases ihf hcf with hvf | ⟨p', hp⟩
     · rcases ihe hce with hve | ⟨p', hp⟩
-      · obtain ⟨n, rfl⟩ := value_types_cn htf hvf
+      · obtain ⟨n, rfl⟩ := value_types_fn htf hvf
         cases htf
         solve_by_elim [Exists.intro]
       · exact ⟨_, Step.appR _ _ _ _ _ hvf hp⟩
@@ -76,11 +81,11 @@ theorem preservation_types {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
   obtain ⟨htp, ht⟩ := ht
   induction hs generalizing t with
   | app p n e h hv =>
-    have .app _ _ t htf hte := ht
+    have .app _ _ t' _ htf hte := ht
     cases htf
     solve_by_elim [subst_types]
   | appL p p' f f' e hs ih =>
-    have .app _ _ t htf hte := ht
+    have .app _ _ t' _ htf hte := ht
     obtain ⟨htp', htf'⟩ := ih htp htf
     constructor
     · exact htp'
@@ -89,7 +94,7 @@ theorem preservation_types {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
       · exact htf'
       · exact types_of_step hte hs
   | appR p p' f e e' hvf hs ih =>
-    have .app _ _ t htf hte := ht
+    have .app _ _ t' _ htf hte := ht
     obtain ⟨htp', hte'⟩ := ih htp hte
     constructor
     · exact htp'
@@ -116,7 +121,7 @@ theorem preservation_wf {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
   induction hs generalizing t with
     try solve | cases ht <;> apply_rules
   | app p n e hn hve =>
-    have .app _ _ t' htf hte := ht
+    have .app _ _ t' _ htf hte := ht
     exact subst_wf htp.validRefs hte.validRefs hwf
 
 end Computation
