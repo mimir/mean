@@ -63,8 +63,12 @@ theorem types_of_step {c c' : Computation} {e : Expr} {t : Ty}
   | var n hn => rw [ty_eq_of_step hn hs]; constructor
   | fn n hn => rw [ty_eq_of_step hn hs, ret_eq_of_step hn hs]; constructor
 
-theorem progress {c : Computation} {t : Ty} (hte : c.toProgram ⊢ c.expr : t)
-    (hc : c.Closed) : c.expr.Value ∨ ∃ c', c ⇒ c' := by
+end Computation
+
+/-- The progress theorem. Corresponds to Theorem 2 in the paper. -/
+theorem Computation.progress {c : Computation} {t : Ty}
+    (hte : c.toProgram ⊢ c.expr : t) (hc : c.Closed) :
+    c.expr.Value ∨ ∃ c', c ⇒ c' := by
   obtain ⟨p, e⟩ := c
   simp only at *
   induction hte with
@@ -129,8 +133,14 @@ theorem progress {c : Computation} {t : Ty} (hte : c.toProgram ⊢ c.expr : t)
       exact ⟨_, Step.proj1 _ _ _ hv₁ hv₂⟩
     · exact ⟨_, Step.proj _ _ _ _ _ hs⟩
 
-theorem preservation_types {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
-  (hs : c ⇒ c') : ⊢ c' : t := by
+/--
+Reduction preserves types.
+
+This proves the typing conclusions of Theorem 3 from the paper, the rest is
+`Computation.preservation_wf`.
+-/
+theorem Computation.preservation_types {c c' : Computation} {t : Ty}
+  (ht : ⊢ c : t) (hs : c ⇒ c') : ⊢ c' : t := by
   obtain ⟨htp, ht⟩ := ht
   induction hs generalizing t with
   | appFn p n e h hv =>
@@ -196,7 +206,13 @@ theorem preservation_types {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
       solve_by_elim
     )
 
-theorem preservation_wf {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
+/--
+Reduction preserves well-formedness.
+
+This proves the well-formedness conclusion of Theorem 3 from the paper, the rest
+is `Computation.preservation_types`.
+-/
+theorem Computation.preservation_wf {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
     (hwf : c.WF) (hs : c ⇒ c') : c'.WF := by
   obtain ⟨htp, ht⟩ := ht
   induction hs generalizing t with
@@ -204,5 +220,3 @@ theorem preservation_wf {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
   | appFn p n e hn hve =>
     have .app _ _ t' _ htf hte := ht
     exact subst_wf htp.validRefs hte.validRefs hwf
-
-end Computation

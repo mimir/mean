@@ -6,6 +6,11 @@ The free-variable relation.
 A variable occurs free in an expression if the expression itself contains the
 variable, or if it contains a reference to a function in which the variable
 occurs free.
+
+By using an inductive proposition, we guarantee that free variable derivations
+must be finite, so that a derivation always points in finitely many steps to an
+actual occurrence of the variable. This means this definition matches the
+paper's definition of free variable sets as a least fixed point.
 -/
 inductive Expr.Free (p : Program) (n : Nat) : Expr → Prop where
   | var : Free p n (.var n)
@@ -20,8 +25,8 @@ inductive Expr.Free (p : Program) (n : Nat) : Expr → Prop where
 /--
 The nesting relation between functions in a program.
 
-During substitution, all functions nested in the function corresponding to the
-substitution variable must be rewritten.
+During substitution, functions nested in the function corresponding to the
+substitution variable need to be rewritten if they are reachable.
 -/
 inductive Program.Nests (p : Program) (n : Nat) : Nat → Prop where
   | free (m : Nat) (_ : m < p.size) : n ≠ m → p.fn[m].Free p n → Nests p n m
@@ -73,7 +78,13 @@ def Program.Dominates (p : Program) (m n k : Nat) : Prop := ¬m ⟶[p, n]* k
 /-- An expression is closed if it has no free variables. -/
 def Expr.Closed (p : Program) (e : Expr) : Prop := ∀ ⦃n⦄, ¬e.Free p n
 
-/-- A program is well-formed if no function nests itself. -/
+/--
+A program is well-formed if no function nests itself.
+
+This corresponds to Property 2 from the paper, but is formulated in terms of the
+strict nesting relation instead. The theorem `Program.wf_iff` shows that the two
+definitions are equivalent.
+-/
 def Program.WF (p : Program) : Prop := ∀ ⦃n⦄, n ⊁[p] n
 
 /--
@@ -145,6 +156,26 @@ theorem Program.nests_trans {p : Program} {m n k : Nat} (h : m ≻[p] n)
     (h' : n ≻[p] k) : m ≻[p] k := by
   induction h' with apply Nests.step <;> assumption
 
+/--
+Proves that our definition of well-formedness in terms of the strict nesting
+relation is equivalent to the paper's definition, which uses the non-strict
+nesting relation.
+-/
+theorem Program.wf_iff {p : Program} :
+    p.WF ↔ ∀ {m n}, m ≽[p] n → n ≽[p] m → m = n := by
+  constructor
+  · intro h m n hnests₁ hnests₂
+    match hnests₁, hnests₂ with
+    | .refl _, _ | _, .refl _ => rfl
+    | .nests _ hnests₁, .nests _ hnests₂ =>
+      exfalso
+      exact h (nests_trans hnests₁ hnests₂)
+  · intro h n hnests
+    cases hnests with
+    | free _ hn hne hf => contradiction
+    | step m _ hn hne hf hnests =>
+      exact hne (h (.nests _ (.free _ _ hne hf)) (.nests _ hnests))
+
 theorem Program.pathWithout_trans {p : Program} {m n k l : Nat}
     (h : m ⟶[p, l]* n) (h' : n ⟶[p, l]* k) : m ⟶[p, l]* k := by
   induction h with
@@ -202,12 +233,6 @@ theorem Expr.free_of_localFn_of_free {p : Program} {e : Expr} {m n : Nat}
   induction hlf with
     first | contradiction
           | solve_by_elim [var, binL, binR, condC, condT, condF, proj]
-
-theorem Program.free_in_fn_of_succ {p : Program} {m n k : Nat} (hm : m < p.size)
-    (hn : n < p.size) (hne : k ≠ n) (hs : m ⟶[p] n) (hf : p.fn[n].Free p k) :
-    p.fn[m].Free p k :=
-  have ⟨_, hlf⟩ := hs
-  Expr.free_of_localFn_of_free hn hne hlf hf
 
 theorem Expr.free_iff {p : Program} {e : Expr} {n : Nat} :
     e.Free p n ↔
@@ -315,7 +340,25 @@ theorem Program.nestsEq_in_prefix_iff {p p' : Program} {n m : Nat}
 grind_pattern Program.nestsEq_in_prefix_iff => p.Prefix p', n ≽[p] m
 grind_pattern Program.nestsEq_in_prefix_iff => p.Prefix p', n ≽[p'] m
 
-theorem Program.free_of_pathWithout_of_free {p : Program} {m n k : Nat}
+/--
+Free variables can be pulled back along CFG edges.
+
+This theorem roughly corresponds to Lemma 1, but is formulated in terms of the
+function bodies insted of the functions themselves.
+-/
+theorem Program.free_in_fn_of_succ {p : Program} {m n k : Nat} (hm : m < p.size)
+    (hn : n < p.size) (hne : k ≠ n) (hs : m ⟶[p] n) (hf : p.fn[n].Free p k) :
+    p.fn[m].Free p k :=
+  have ⟨_, hlf⟩ := hs
+  Expr.free_of_localFn_of_free hn hne hlf hf
+
+/--
+Free variables can be pulled back along paths through the CFG.
+
+This theorem roughly corresponds to Lemma 2, but is formulated in terms of the
+function bodies insted of the functions themselves.
+-/
+theorem Program.free_in_fn_of_pathWithout {p : Program} {m n k : Nat}
     (hm : m < p.size) (hk : k < p.size) (hp : m ⟶[p, n]* k)
     (hf : p.fn[k].Free p n) : p.fn[m].Free p n := by
   obtain ⟨l, hl, hlv, hp'⟩ := (free_in_fn_iff hk hp.ne_end).mp hf
@@ -329,7 +372,7 @@ theorem Program.dominates_of_nests {p : Program} {m n k : Nat}
   | free k hk hne hfk =>
     intro hp
     have hm := lt_size_left_of_nests hv hmn
-    have hfm := free_of_pathWithout_of_free hm hk hp hfk
+    have hfm := free_in_fn_of_pathWithout hm hk hp hfk
     have hnm : n ≻[p] m := by
       constructor
       · intro rfl
@@ -340,7 +383,7 @@ theorem Program.dominates_of_nests {p : Program} {m n k : Nat}
     apply dominates_trans ih
     intro hp
     have hm := lt_size_left_of_nests hv hmn
-    have hfm := free_of_pathWithout_of_free hm hk hp hfk
+    have hfm := free_in_fn_of_pathWithout hm hk hp hfk
     have hlm : l ≻[p] m := by
       constructor
       · intro rfl
@@ -348,6 +391,7 @@ theorem Program.dominates_of_nests {p : Program} {m n k : Nat}
       · exact hfm
     exact hwf (nests_trans hmn (nests_trans hnl hlm))
 
+/-- Nesting implies dominance. Corresponds to Theorem 1 in the paper. -/
 theorem Program.dominates_of_nestsEq {p : Program} {m n k : Nat}
     (hv : p.ValidRefs) (hwf : p.WF) (hmn : m ≽[p] n) (hnk : n ≽[p] k) :
     p.Dominates m n k :=

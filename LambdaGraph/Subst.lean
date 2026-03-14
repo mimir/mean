@@ -79,6 +79,10 @@ variable occurs free. For these functions, new versions need to be added to the
 program, with their bodies substituted in the same way. In addition to the new
 program and expression, this function returns a new function map to allow
 reusing the newly created functions across subexpressions.
+
+This definition is `noncomputable` as we have not defined a decision procedure
+to decide if an expression contains a free substitution variable (but there is
+no reason such a procedure could not be implemented).
 -/
 noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
     (fm : FunMap p.size) : SubstResult p fm :=
@@ -1315,9 +1319,13 @@ theorem Program.subst_wf {p : Program} {e : Expr}
     obtain rfl : k = l := hfm'.inj (by lia) (by lia) (by lia) (by lia) (hfmk ▸ hfml)
     exact hwf hnests
 
-namespace Computation
+/--
+Substitution preserves types.
 
-theorem subst_types {c : Computation} {t : Ty} {n : Nat} {v : Expr}
+This proves the typing conclusions of Lemma 3 from the paper, the rest is
+`Computation.subst_wf`.
+-/
+theorem Computation.subst_types {c : Computation} {t : Ty} {n : Nat} {v : Expr}
     (hn : n < c.size) (ht : ⊢ c : t) (hv : c.toProgram ⊢ v : c.ty[n]) :
     ⊢ c.subst n v : t := by
   refine ⟨Program.subst_types ht.program_types ?hvm ?hfm,
@@ -1325,9 +1333,14 @@ theorem subst_types {c : Computation} {t : Ty} {n : Nat} {v : Expr}
   · exact VarMap.mk_types hn hv
   · exact FunMap.mk_types
 
-theorem subst_wf {c : Computation} {n : Nat} {v : Expr} (hp : c.ValidRefs)
-    (hv : v.ValidRefs c.toProgram) (h : c.WF) : (c.subst n v).WF :=
+/--
+Substitution preserves well-formedness.
+
+This proves the well-formedness conclusion of Lemma 3 from the paper, the rest
+is `Computation.subst_types`.
+-/
+theorem Computation.subst_wf {c : Computation} {n : Nat} {v : Expr}
+    (hp : c.ValidRefs) (hv : v.ValidRefs c.toProgram) (h : c.WF) :
+    (c.subst n v).WF :=
   Program.subst_wf (VarMap.valid_mk hv) FunMap.valid_mk hp
     Program.validSubst_mk h
-
-end Computation
