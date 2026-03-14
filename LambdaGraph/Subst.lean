@@ -1233,16 +1233,6 @@ theorem Program.lt_size_of_free_in_subst_of_lt {p : Program} {e : Expr}
   rw [subst_fn_eq_of_lt hk] at hlv
   exact h hk hlv
 
-theorem Program.lt_size_of_nests_in_subst_of_lt {p : Program} {e : Expr}
-    {vm : VarMap p.size} {fm : FunMap p.size} (h : p.ValidRefs) {n m : Nat}
-    (hm : m < p.size) (hnests : n ≻[(e.subst p vm fm).program] m) :
-    n < p.size := by
-  induction hnests with
-  | free m hm' hne hf =>
-    exact lt_size_of_free_in_subst_of_lt h hm hne hf
-  | step k m hm hne hf hnests ih =>
-    exact ih <| lt_size_of_free_in_subst_of_lt h hm hne hf
-
 theorem Expr.validRefs_in_subst {p : Program} {e₁ e₂ : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (he₁ : e₁.ValidRefs p) :
     e₁.ValidRefs (e₂.subst p vm fm).program :=
@@ -1272,7 +1262,7 @@ theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
   have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h
   have hfm' : fm'.Valid := FunMap.valid_subst hfm
   induction hnests' with
-  | free m' hltm hne' hf' =>
+  | free n' m' hltn hltm hne' hf' =>
     have hm' : p.size ≤ m' := by
       false_or_by_contra
       rename_i hm'
@@ -1282,24 +1272,14 @@ theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
     obtain ⟨n, m, hn, hm, hfmn, hfmm, hf⟩ :=
       Program.free_in_fn_of_free_in_subst_of_ge hvm hfm hp h hn' hm' hne' hltm hf'
     have hne : n ≠ m := by grind
-    exact ⟨n, m, hn, hm, hfmn, hfmm, .free _ hm hne hf⟩
-  | step k' m' hmlt hne' hf' hnests' ih =>
-    obtain ⟨n, k, hn, hk, hfmn, hfmk, hnests⟩ := ih
-    have hk' : p.size ≤ k' := by
-      false_or_by_contra
-      rename_i hk'
-      have := lt_size_of_nests_in_subst_of_lt hp (by simpa using hk') hnests'
-      lia
-    have hm' : p.size ≤ m' := by
-      false_or_by_contra
-      rename_i hm'
-      have := lt_size_of_free_in_subst_of_lt hp (by simpa using hm') hne' hf'
-      lia
-    obtain ⟨l, m, hl, hm, hfml, hfmm, hf⟩ :=
-      free_in_fn_of_free_in_subst_of_ge hvm hfm hp h hk' hm' hne' hmlt hf'
-    obtain rfl : k = l := hfm'.inj (by lia) (by lia) (by lia) (by lia) (hfmk ▸ hfml)
-    have hne : k ≠ m := by grind
-    exact ⟨n, m, hn, hm, hfmn, hfmm, .step _ _ hm hne hf hnests⟩
+    exact ⟨n, m, hn, hm, hfmn, hfmm, .free _ _ hn hm hne hf⟩
+  | trans n' k' m' hnests₁' hnests₂' ih₁ ih₂ =>
+    have hk' : p.size ≤ k' := by grind
+    obtain ⟨n, k, hn, hk, hfmn, hfmk, hnests₁⟩ := ih₁ hn'
+    obtain ⟨l, m, hl, hm, hfml, hfmm, hnests₂⟩ := ih₂ hk'
+    obtain rfl : k = l :=
+      hfm'.inj (by lia) (by lia) (by lia) (by lia) (hfmk ▸ hfml)
+    exact ⟨n, m, hn, hm, hfmn, hfmm, .trans _ _ _ hnests₁ hnests₂⟩
 
 theorem Program.subst_wf {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)

@@ -28,10 +28,12 @@ The nesting relation between functions in a program.
 During substitution, functions nested in the function corresponding to the
 substitution variable need to be rewritten if they are reachable.
 -/
-inductive Program.Nests (p : Program) (n : Nat) : Nat → Prop where
-  | free (m : Nat) (_ : m < p.size) : n ≠ m → p.fn[m].Free p n → Nests p n m
-  | step (m k : Nat) (_ : k < p.size) :
-    m ≠ k → p.fn[k].Free p m → Nests p n m → Nests p n k
+inductive Program.Nests (p : Program) : Nat → Nat → Prop where
+  | free (n m : Nat) (_ : n < p.size) (_ : m < p.size) :
+    n ≠ m → p.fn[m].Free p n → Nests p n m
+  | trans (n m k : Nat) : Nests p n m → Nests p m k → Nests p n k
+
+attribute [grind →] Program.Nests.trans
 
 notation:40 n:41 " ≻[" p:min "] " m:41 => Program.Nests p n m
 notation:40 n:41 " ⊁[" p:min "] " m:41 => ¬n ≻[p] m
@@ -135,26 +137,38 @@ theorem Expr.lt_size_of_free {p : Program} {e : Expr} {n : Nat}
   induction hf with simp_all <;> solve_by_elim
 
 @[grind →]
-theorem Program.lt_size_left_of_nests {p : Program} {m n : Nat}
-    (hp : p.ValidRefs) (h : m ≻[p] n) : m < p.size := by
-  induction h with solve_by_elim [Expr.lt_size_of_free]
+theorem Program.lt_size_left_of_nests {p : Program} {m n : Nat} :
+    m ≻[p] n → m < p.size
+  | .free _ _ hn _ _ _ => hn
+  | .trans _ _ _ h _ => lt_size_left_of_nests h
 
 @[grind →]
 theorem Program.lt_size_right_of_nests {p : Program} {m n : Nat} :
     n ≻[p] m → m < p.size
-  | .free _ hm _ _ => hm
-  | .step _ _ hm _ _ _ => hm
+  | .free _ _ _ hm _ _ => hm
+  | .trans _ _ _ _ h => lt_size_right_of_nests h
 
 @[grind →]
-theorem Program.lt_size_left_of_nestsEq {p : Program} {m n : Nat}
-    (hp : p.ValidRefs) : m ≽[p] n → m < p.size
+theorem Program.lt_size_left_of_nestsEq {p : Program} {m n : Nat} :
+    m ≽[p] n → m < p.size
   | .refl h => h
-  | .nests _ h => lt_size_left_of_nests hp h
+  | .nests _ h => lt_size_left_of_nests h
 
-@[grind →]
-theorem Program.nests_trans {p : Program} {m n k : Nat} (h : m ≻[p] n)
-    (h' : n ≻[p] k) : m ≻[p] k := by
-  induction h' with apply Nests.step <;> assumption
+theorem Program.nests_iff {p : Program} {m n : Nat} : m ≻[p] n ↔
+    ∃ (_ : n < p.size) (k : Nat), k < p.size ∧ k ≠ n ∧ p.fn[n].Free p k ∧ m ≽[p] k := by
+  constructor
+  · intro h
+    induction h with
+    | free k n hk hn hne hf => exact ⟨hn, k, hk, hne, hf, .refl hk⟩
+    | trans n m k h₁ h₂ ih₁ ih₂ =>
+      obtain ⟨hk, l, hl, hne, hf, h⟩ := ih₂
+      cases h with
+      | refl => exact ⟨hk, m, hl, hne, hf, .nests _ h₁⟩
+      | nests _ h => exact ⟨hk, l, hl, hne, hf, .nests _ (.trans _ _ _ h₁ h)⟩
+  · rintro ⟨hn, k, hk, hne, hf, h⟩
+    cases h with
+    | refl => exact .free _ _ hk hn hne hf
+    | nests _ h => exact .trans _ _ _ h (.free _ _ hk hn hne hf)
 
 /--
 Proves that our definition of well-formedness in terms of the strict nesting
@@ -169,12 +183,10 @@ theorem Program.wf_iff {p : Program} :
     | .refl _, _ | _, .refl _ => rfl
     | .nests _ hnests₁, .nests _ hnests₂ =>
       exfalso
-      exact h (nests_trans hnests₁ hnests₂)
+      exact h (.trans _ _ _ hnests₁ hnests₂)
   · intro h n hnests
-    cases hnests with
-    | free _ hn hne hf => contradiction
-    | step m _ hn hne hf hnests =>
-      exact hne (h (.nests _ (.free _ _ hne hf)) (.nests _ hnests))
+    replace ⟨hn, k, hk, hne, hf, hnests⟩ := nests_iff.mp hnests
+    exact hne (h (.nests _ (.free _ _ hk hn hne hf)) hnests)
 
 theorem Program.pathWithout_trans {p : Program} {m n k l : Nat}
     (h : m ⟶[p, l]* n) (h' : n ⟶[p, l]* k) : m ⟶[p, l]* k := by
@@ -311,23 +323,16 @@ theorem Program.nests_in_prefix_iff {p p' : Program} {n m : Nat}
   constructor
   · intro hnests
     induction hnests with
-    | free m hm hne hf =>
+    | free n m hn hm hne hf =>
       rw [h.fn_eq hm] at *
-      exact .free _ hm hne ((Expr.free_in_prefix_iff hp (hp hm) h).mp hf)
-    | step k m hm' hne hf hnests ih =>
-      obtain ⟨l, hl, hlv, hpath⟩ := (free_in_fn_iff hm' hne).mp hf
-      rw [h.fn_eq hm] at hf
-      replace hf := (Expr.free_in_prefix_iff hp (hp hm) h).mp hf
-      exact .step _ _ _ hne hf (ih (Expr.lt_size_of_free hp (hp hm) hf))
+      exact .free _ _ (by grind) hm hne ((Expr.free_in_prefix_iff hp (hp hm) h).mp hf)
+    | trans => grind
   · intro hnests
     induction hnests with
-    | free m hm hne hf =>
-      refine .free _ (by grind) hne <|
+    | free n m hn hm hne hf =>
+      exact .free _ _ (by grind) (by grind) hne <|
         (Expr.free_in_prefix_iff hp (h.fn_eq hm ▸ hp hm) h).mpr (h.fn_eq hm ▸ hf)
-    | step k m _ hne hf hnests ih =>
-      have hk := Expr.lt_size_of_free hp (hp hm) hf
-      replace hf := (Expr.free_in_prefix_iff hp (hp hm) h).mpr hf
-      exact .step _ _ (by grind) hne (h.fn_eq hm ▸ hf) (ih hk)
+    | trans => grind
 
 grind_pattern Program.nests_in_prefix_iff => p.Prefix p', n ≻[p] m
 grind_pattern Program.nests_in_prefix_iff => p.Prefix p', n ≻[p'] m
@@ -366,36 +371,21 @@ theorem Program.free_in_fn_of_pathWithout {p : Program} {m n k : Nat}
   exact ⟨l, hl, hlv, pathWithout_trans hp hp'⟩
 
 theorem Program.dominates_of_nests {p : Program} {m n k : Nat}
-    (hv : p.ValidRefs) (hwf : p.WF) (hmn : m ≻[p] n) (hnk : n ≻[p] k) :
-    p.Dominates m n k := by
+    (hwf : p.WF) (hmn : m ≻[p] n) (hnk : n ≻[p] k) : p.Dominates m n k := by
   induction hnk with
-  | free k hk hne hfk =>
+  | free n k hn hk hne hfk =>
     intro hp
-    have hm := lt_size_left_of_nests hv hmn
+    have hm := lt_size_left_of_nests hmn
     have hfm := free_in_fn_of_pathWithout hm hk hp hfk
-    have hnm : n ≻[p] m := by
-      constructor
-      · intro rfl
-        exact hwf hmn
-      · exact hfm
-    exact hwf (nests_trans hmn hnm)
-  | step l k hk hne hfk hnl ih =>
-    apply dominates_trans ih
-    intro hp
-    have hm := lt_size_left_of_nests hv hmn
-    have hfm := free_in_fn_of_pathWithout hm hk hp hfk
-    have hlm : l ≻[p] m := by
-      constructor
-      · intro rfl
-        exact hwf (nests_trans hnl hmn)
-      · exact hfm
-    exact hwf (nests_trans hmn (nests_trans hnl hlm))
+    have hnm : n ≻[p] m := .free _ _ hn _ hp.ne_start hfm
+    exact hwf (.trans _ _ _ hmn hnm)
+  | trans n l k hnl hlk ih₁ ih₂ =>
+    apply_rules [dominates_trans, Nests.trans]
 
 /-- Nesting implies dominance. Corresponds to Theorem 1 in the paper. -/
 theorem Program.dominates_of_nestsEq {p : Program} {m n k : Nat}
-    (hv : p.ValidRefs) (hwf : p.WF) (hmn : m ≽[p] n) (hnk : n ≽[p] k) :
-    p.Dominates m n k :=
+    (hwf : p.WF) (hmn : m ≽[p] n) (hnk : n ≽[p] k) : p.Dominates m n k :=
   match hmn, hnk with
   | .refl _, _ => fun h => nomatch h.ne_start
-  | .nests _ _, .refl _ => fun h => nomatch h.ne_end
-  | .nests _ h₁, .nests _ h₂ => dominates_of_nests hv hwf h₁ h₂
+  | _, .refl _ => fun h => nomatch h.ne_end
+  | .nests _ h₁, .nests _ h₂ => dominates_of_nests hwf h₁ h₂
