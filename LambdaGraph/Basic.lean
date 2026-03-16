@@ -60,6 +60,7 @@ inductive Const where
   | logic (f : Logic)
 
 /-- Returns the type of a constant. -/
+@[grind unfold]
 def Const.ty : Const → Ty
   | unit => .unit
   | bool _ => .bool
@@ -98,19 +99,19 @@ abbrev Expr.app (f e : Expr) : Expr := f.bin .app e
 
 abbrev Expr.pair (e₁ e₂ : Expr) : Expr := e₁.bin .pair e₂
 
-@[coe]
+@[coe, grind unfold]
 def Expr.ofBool (b : Bool) : Expr := .const (.bool b)
 
-@[coe]
+@[coe, grind unfold]
 def Expr.ofInt (x : Int) : Expr := .const (.int x)
 
-@[coe]
+@[coe, grind unfold]
 def Expr.ofOp (f : Op) : Expr := .const (.op f)
 
-@[coe]
+@[coe, grind unfold]
 def Expr.ofCmp (f : Cmp) : Expr := .const (.cmp f)
 
-@[coe]
+@[coe, grind unfold]
 def Expr.ofLogic (f : Logic) : Expr := .const (.logic f)
 
 instance : Coe Bool Expr := ⟨Expr.ofBool⟩
@@ -435,6 +436,57 @@ theorem Expr.bounded_proj_iff {n : Nat} {e : Expr} {i : Fin 2} :
   · intro h m r hl
     have .proj _ _ _ hl := hl
     exact h hl
+
+@[simp, grind =]
+theorem Expr.const_types_iff {p : Program} {c : Const} {t : Ty} :
+    p ⊢ const c : t ↔ t = c.ty := by
+  constructor
+  · intro h
+    have .const _ := h
+    rfl
+  · intro rfl
+    constructor
+
+@[simp, grind =]
+theorem Expr.app_types_iff {p : Program} {f e : Expr} {t : Ty} :
+    p ⊢ f.app e : t ↔ ∃ t', p ⊢ f : (.fn t' t) ∧ p ⊢ e : t' := by
+  constructor
+  · intro h
+    have .app _ _ t' _ htf hte := h
+    exact ⟨t', htf, hte⟩
+  · rintro ⟨t', htf, hte⟩
+    exact .app _ _ t' _ htf hte
+
+@[simp, grind =]
+theorem Expr.pair_types_iff {p : Program} {e₁ e₂ : Expr} {t : Ty} :
+    p ⊢ e₁.pair e₂ : t ↔ ∃ t₁ t₂, t = .prod t₁ t₂ ∧ p ⊢ e₁ : t₁ ∧ p ⊢ e₂ : t₂ := by
+  constructor
+  · intro h
+    have .pair _ _ t₁ t₂ hte₁ hte₂ := h
+    exact ⟨t₁, t₂, rfl, hte₁, hte₂⟩
+  · rintro ⟨t₁, t₂, rfl, hte₁, hte₂⟩
+    constructor <;> assumption
+
+@[simp, grind =]
+theorem Expr.cond_types_iff {p : Program} {c et ef : Expr} {t : Ty} :
+    p ⊢ c.cond et ef : t ↔ p ⊢ c : .bool ∧ p ⊢ et : t ∧ p ⊢ ef : t := by
+  constructor
+  · intro h
+    have .cond _ _ _ _ htc htet htef := h
+    exact ⟨htc, htet, htef⟩
+  · intro ⟨htc, htet, htef⟩
+    exact .cond _ _ _ _ htc htet htef
+
+@[simp, grind =]
+theorem Expr.proj_types_iff {p : Program} {e : Expr} {i : Fin 2} {t : Ty} :
+    p ⊢ e.proj i : t ↔
+      ∃ t', i = 0 ∧ p ⊢ e : .prod t t' ∨ i = 1 ∧ p ⊢ e : .prod t' t := by
+  constructor
+  · intro h
+    cases h with
+    | proj0 _ _ t' h => exact ⟨t', Or.inl ⟨rfl, h⟩⟩
+    | proj1 _ t' _ h => exact ⟨t', Or.inr ⟨rfl, h⟩⟩
+  · rintro ⟨t', ⟨rfl, h⟩ | ⟨rfl, h⟩⟩ <;> constructor <;> assumption
 
 @[grind .]
 theorem Expr.bounded_of_ge {n₁ n₂ : Nat} {e : Expr}

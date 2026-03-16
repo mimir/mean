@@ -106,6 +106,36 @@ def Computation.Free (c : Computation) (n : Nat) := c.expr.Free c.toProgram n
 /-- A computation is closed if its expression is closed in its program. -/
 def Computation.Closed (c : Computation) : Prop := c.expr.Closed c.toProgram
 
+@[simp, grind .]
+theorem Expr.not_free_in_const {p : Program} {c : Const} {n : Nat} :
+    ¬(const c).Free p n := nofun
+
+@[simp, grind =]
+theorem Expr.free_in_bin_iff {p : Program} {k : BinKind} {e₁ e₂ : Expr}
+    {n : Nat} : (e₁.bin k e₂).Free p n ↔ e₁.Free p n ∨ e₂.Free p n := by
+  constructor
+  · intro h
+    cases h <;> solve_by_elim [Or.inl, Or.inr]
+  · rintro (hf | he) <;> solve_by_elim [Free.binL, Free.binR]
+
+@[simp, grind =]
+theorem Expr.free_in_cond_iff {p : Program} {c et ef : Expr} {n : Nat} :
+    (c.cond et ef).Free p n ↔ c.Free p n ∨ et.Free p n ∨ ef.Free p n := by
+  constructor
+  · intro h
+    cases h <;> solve_by_elim [Or.inl, Or.inr]
+  · rintro (hc | het | hef) <;> solve_by_elim [Free.condC, Free.condT, Free.condF]
+
+@[simp, grind =]
+theorem Expr.free_in_proj_iff {p : Program} {e : Expr} {i : Fin 2} {n : Nat} :
+    (e.proj i).Free p n ↔ e.Free p n := by
+  constructor
+  · intro h
+    have .proj _ _ h := h
+    exact h
+  · intro h
+    exact .proj _ _ h
+
 @[simp]
 theorem Expr.not_closed_var {p : Program} {n : Nat} : ¬(Expr.var n).Closed p :=
   fun h => h .var
@@ -288,6 +318,46 @@ theorem Program.free_in_fn_iff {p : Program} {m n : Nat} (hm : m < p.size)
     | step m l k hne hs hp =>
       obtain ⟨_, hlf⟩ := hs
       exact Expr.free_iff.mpr <| Or.inr ⟨l, k, hk, hlf, hp, hlv⟩
+
+theorem Program.free_eq_of_local_eq {p : Program} {i : Nat} (hi : i < p.size)
+    (h : ∀ k r, p.fn[i].Local k r → k = i) {n : Nat} (hf : p.fn[i].Free p n) :
+    n = i := by
+  false_or_by_contra
+  rename_i hne
+  obtain ⟨k, hk, hlv, hpath⟩ := (free_in_fn_iff hi hne).mp hf
+  induction hpath with
+  | refl i => solve_by_elim
+  | step i l k hne hs hpath ih =>
+    obtain ⟨_, hlf⟩ := hs
+    have := h _ _ hlf
+    subst l
+    apply ih hi h hf hne hk hlv
+
+theorem Expr.free_in_setBody {p : Program} {i : Nat} {b e : Expr}
+    (hi : i < p.size) (h : ∀ k r, p.fn[i].Local k r → k = i) {n : Nat}
+    (hf : e.Free p n) : e.Free (p.setBody i b) n := by
+  induction hf with
+    try solve_by_elim [Free.binL, Free.binR, Free.condC, Free.condT, Free.condF]
+  | fn m hm hne hf ih =>
+    refine .fn _ hm hne ?_
+    by_cases i = m
+    · subst m
+      have := Program.free_eq_of_local_eq hi h hf
+      contradiction
+    · simp [*]
+
+theorem Program.nests_in_setBody {p : Program} {i : Nat} {b : Expr}
+    (hi : i < p.size) (h : ∀ k r, p.fn[i].Local k r → k = i) {n m : Nat}
+    (hnests : n ≻[p] m) : n ≻[p.setBody i b] m := by
+  induction hnests with
+  | free n m hn hm hne hf =>
+    have : i ≠ m := by
+      intro rfl
+      have := free_eq_of_local_eq _ h hf
+      contradiction
+    rw [show p.fn[m] = (p.setBody i b).fn[m] by simp [*]] at hf
+    exact .free _ _ hn hm hne (Expr.free_in_setBody hi h hf)
+  | trans => grind
 
 theorem Expr.free_in_prefix_iff {p p' : Program} {e : Expr} {n : Nat}
     (hp : p.ValidRefs) (he : e.ValidRefs p) (h : p.Prefix p') :

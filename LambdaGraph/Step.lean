@@ -45,23 +45,26 @@ theorem size_le_of_step {c c' : Computation} (h : c ⇒ c') :
 theorem lt_size_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
     (h : c ⇒ c') : n < c'.size := Nat.lt_of_lt_of_le hn (size_le_of_step h)
 
-theorem fn_eq_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
-    (h : c ⇒ c') : c.fn[n] = c'.fn[n]'(lt_size_of_step hn h) := by
+theorem fn_eq_of_step {c c' : Computation} (h : c ⇒ c') {n : Nat}
+    (hn : n < c.size) : c'.fn[n]'(lt_size_of_step hn h) = c.fn[n] := by
   induction h with simp [subst, Program.subst_fn_eq_of_lt hn, *]
 
-theorem ty_eq_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
-    (h : c ⇒ c') : c.ty[n] = c'.ty[n]'(lt_size_of_step hn h) := by
+theorem ty_eq_of_step {c c' : Computation} (h : c ⇒ c') {n : Nat}
+    (hn : n < c.size) : c'.ty[n]'(lt_size_of_step hn h) = c.ty[n] := by
   induction h with simp [subst, Program.subst_ty_eq_of_lt hn, *]
 
-theorem ret_eq_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
-    (h : c ⇒ c') : c.ret[n] = c'.ret[n]'(lt_size_of_step hn h) := by
+theorem ret_eq_of_step {c c' : Computation} (h : c ⇒ c') {n : Nat}
+    (hn : n < c.size) : c'.ret[n]'(lt_size_of_step hn h) = c.ret[n] := by
   induction h with simp [subst, Program.subst_ret_eq_of_lt hn, *]
 
-theorem types_of_step {c c' : Computation} {e : Expr} {t : Ty}
-    (ht : c.toProgram ⊢ e : t) (hs : c ⇒ c') : c'.toProgram ⊢ e : t := by
-  induction ht with try constructor <;> assumption
-  | var n hn => rw [ty_eq_of_step hn hs]; constructor
-  | fn n hn => rw [ty_eq_of_step hn hs, ret_eq_of_step hn hs]; constructor
+@[grind →]
+theorem prefix_of_step {c c' : Computation} (h : c ⇒ c') :
+    c.Prefix c'.toProgram := by
+  constructor
+  · exact fn_eq_of_step h
+  · exact ty_eq_of_step h
+  · exact ret_eq_of_step h
+  · exact size_le_of_step h
 
 end Computation
 
@@ -133,6 +136,28 @@ theorem Computation.progress {c : Computation} {t : Ty}
       exact ⟨_, Step.proj1 _ _ _ hv₁ hv₂⟩
     · exact ⟨_, Step.proj _ _ _ _ _ hs⟩
 
+theorem Computation.free_of_step_of_free {c c' : Computation} {t : Ty} {n : Nat}
+    (ht : ⊢ c : t) (hwf : c.WF) (hs : c ⇒ c') (hf : c'.Free n) : c.Free n := by
+  obtain ⟨htp, hte⟩ := ht
+  induction hs generalizing t with try grind [Free, cases BinKind]
+  | appFn p m e hm he =>
+    replace .app _ _ t' _ htf hte := hte
+    dsimp only [Free] at *
+    have h : ∀ k, p.fn[m].Free p k → k ≽[p] m := by
+      intro k hf
+      by_cases k = m
+      · subst k
+        exact .refl hm
+      · exact .nests _ (.free _ _ (by grind) hm ‹_› hf)
+    obtain ⟨hf, hne⟩ | h :=
+      free_of_free_in_subst htp.validRefs (htp.validRefs hm) hte.validRefs hwf h hf
+    · exact .binL _ _ _ (.fn _ hm hne hf)
+    · exact .binR _ _ _ h
+
+theorem Computation.preservation_closed {c c' : Computation} {t : Ty}
+    (ht : ⊢ c : t) (hwf : c.WF) (hs : c ⇒ c') (hc : c.Closed) : c'.Closed :=
+  fun _ hf => hc (free_of_step_of_free ht hwf hs hf)
+
 /--
 Reduction preserves types.
 
@@ -142,69 +167,11 @@ This proves the typing conclusions of Theorem 3 from the paper, the rest is
 theorem Computation.preservation_types {c c' : Computation} {t : Ty}
   (ht : ⊢ c : t) (hs : c ⇒ c') : ⊢ c' : t := by
   obtain ⟨htp, ht⟩ := ht
-  induction hs generalizing t with
+  induction hs generalizing t with try grind [Types, cases BinKind]
   | appFn p n e h hv =>
-    have .app _ _ t' _ htf hte := ht
-    have .fn _ hn := htf
+    have .app _ _ t _ htf hte := ht
+    cases htf
     solve_by_elim [subst_types]
-  | appOp p f x y =>
-    have .app _ _ t' _ htf hte := ht
-    have .const _ := htf
-    solve_by_elim
-  | appCmp p f x y =>
-    have .app _ _ t' _ htf hte := ht
-    have .const _ := htf
-    solve_by_elim
-  | appLogic p f b₁ b₂ =>
-    have .app _ _ t' _ htf hte := ht
-    have .const _ := htf
-    solve_by_elim
-  | binL p p' k e₁ e₁' e₂ hs ih =>
-    cases ht <;> (
-      obtain ⟨htp', ht₁'⟩ := ih htp ‹_›
-      constructor
-      · exact htp'
-      · dsimp only at *
-        constructor
-        · exact ht₁'
-        · exact types_of_step ‹_› hs
-    )
-  | binR p p' k e₁ e₂ e₂' hv₁ hs ih =>
-    cases ht <;> (
-      obtain ⟨htp', ht₂'⟩ := ih htp ‹_›
-      constructor
-      · exact htp'
-      · dsimp only at *
-        constructor
-        · exact types_of_step ‹_› hs
-        · exact ht₂'
-    )
-  | condT p et ef => cases ht; constructor <;> assumption
-  | condF p et ef => cases ht; constructor <;> assumption
-  | condC p p' c c' et ef hs ih =>
-    have .cond _ _ _ _ htc htet htef := ht
-    obtain ⟨htp', htc'⟩ := ih htp htc
-    constructor
-    · exact htp'
-    · dsimp only at *
-      constructor
-      · exact htc'
-      · exact types_of_step htet hs
-      · exact types_of_step htef hs
-  | proj0 p e₁ e₂ hv₁ hv₂ =>
-    have .proj0 _ _ t' ht := ht
-    have .pair _ _ _ _ ht₁ ht₂ := ht
-    solve_by_elim
-  | proj1 p e₁ e₂ hv₁ hv₂ =>
-    have .proj1 _ _ t' ht := ht
-    have .pair _ _ _ _ ht₁ ht₂ := ht
-    solve_by_elim
-  | proj p p' e e' i hs ih =>
-    cases ht <;> (
-      simp_all only [forall_const, Fin.isValue]
-      obtain ⟨htp', hte'⟩ := ih ‹_›
-      solve_by_elim
-    )
 
 /--
 Reduction preserves well-formedness.
@@ -215,8 +182,4 @@ is `Computation.preservation_types`.
 theorem Computation.preservation_wf {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
     (hwf : c.WF) (hs : c ⇒ c') : c'.WF := by
   obtain ⟨htp, ht⟩ := ht
-  induction hs generalizing t with
-    try solve | cases ht <;> apply_rules
-  | appFn p n e hn hve =>
-    have .app _ _ t' _ htf hte := ht
-    exact subst_wf htp.validRefs hte.validRefs hwf
+  induction hs generalizing t with grind [subst_wf, cases BinKind]
