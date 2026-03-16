@@ -1,17 +1,18 @@
 /-- The type of an expression. -/
 inductive Ty where
-  | bot
-  | unit
-  | bool
-  | int
-  | fn (t₁ t₂ : Ty)
-  | prod (t₁ t₂ : Ty)
+  | bot                 -- the uninhabited bottom type
+  | unit                -- the unit type
+  | bool                -- booleans
+  | int                 -- integers
+  | fn (t₁ t₂ : Ty)     -- the function type t₁ → t₂
+  | prod (t₁ t₂ : Ty)   -- the product type t₁ × t₂
 
 class Denote (α : Type) (β : outParam Type) where
   denote : α → β
 
 notation "⟦" x "⟧" => Denote.denote x
 
+/-- An arithmetic operator. -/
 inductive Op where
   | add
   | sub
@@ -23,6 +24,7 @@ instance : Denote Op (Int → Int → Int) where
     | .sub => (· - ·)
     | .mul => (· * ·)
 
+/-- A comparison operator. -/
 inductive Cmp where
   | eq
   | ne
@@ -36,6 +38,7 @@ instance : Denote Cmp (Int → Int → Bool) where
     | .le => (· ≤ ·)
     | .lt => (· < ·)
 
+/-- A boolean operator. -/
 inductive Logic where
   | and
   | or
@@ -47,14 +50,16 @@ instance : Denote Logic (Bool → Bool → Bool) where
     | .or => (· || ·)
     | .xor => (· ^^ ·)
 
+/-- Any constant or builtin operator. -/
 inductive Const where
-  | unit
-  | bool (b : Bool)
-  | int (x : Int)
+  | unit                -- the unique value of type unit
+  | bool (b : Bool)     -- boolean literal
+  | int (x : Int)       -- integer literal
   | op (f : Op)
   | cmp (f : Cmp)
   | logic (f : Logic)
 
+/-- Returns the type of a constant. -/
 def Const.ty : Const → Ty
   | unit => .unit
   | bool _ => .bool
@@ -63,9 +68,10 @@ def Const.ty : Const → Ty
   | cmp _ => .fn (.prod .int .int) .bool
   | logic _ => .fn (.prod .bool .bool) .bool
 
+/-- A kind of binary expression. -/
 inductive BinKind where
-  | app
-  | pair
+  | app     -- a function application
+  | pair    -- a pair constructor
 
 /--
 An expression.
@@ -73,14 +79,18 @@ An expression.
 An expression is part of a program containing labelled lambda terms that may
 refer to other lambdas and their variables by label. The expression language
 does not contain a construct for unnamed lambdas.
+
+This definition does not require that the labels contained in the expression are
+valid indices for any particular program. The predicate `Expr.ValidRefs` is
+defined for this purpose.
 -/
 inductive Expr where
-  | var (n : Nat)
-  | fn (n : Nat)
-  | const (c : Const)
-  | bin (k : BinKind) (e₁ e₂ : Expr)
-  | cond (c et ef : Expr)
-  | proj (e : Expr) (i : Fin 2)
+  | var (n : Nat)                     -- a variable (argument of function n)
+  | fn (n : Nat)                      -- a function reference
+  | const (c : Const)                 -- a constant or builtin
+  | bin (k : BinKind) (e₁ e₂ : Expr)  -- a binary expression
+  | cond (c et ef : Expr)             -- a conditional expression
+  | proj (e : Expr) (i : Fin 2)       -- pair projection to one component
 
 abbrev Expr.unit : Expr := .const .unit
 
@@ -125,6 +135,10 @@ A collection of labelled lambda terms.
 
 A program is represented as an array of function bodies and arrays of their
 corresponding argument and return types.
+
+This definition does not require that labels appearing in function bodies are
+valid indices into the program. The predicate `Program.ValidRefs` is defined for
+this purpose.
 -/
 structure Program where
   size : Nat
@@ -225,7 +239,7 @@ inductive RefKind where
   | var
   | fn
 
-/-- A reference (variable or function) occuring as a subexpression. -/
+/-- A reference (variable or function) occurring as a subexpression. -/
 inductive Expr.Local (n : Nat) : RefKind → Expr → Prop where
   | var : (var n).Local n .var
   | fn : (fn n).Local n .fn
@@ -242,17 +256,21 @@ inductive Expr.Local (n : Nat) : RefKind → Expr → Prop where
   | proj (r : RefKind) (e : Expr) (i : Fin 2) :
     e.Local n r → (e.proj i).Local n r
 
-/-- A local variable in an expression. -/
+/-- A local variable in an expression. Matches LV in the paper. -/
 abbrev Expr.LocalVar (e : Expr) (n : Nat) : Prop := e.Local n .var
 
-/-- A local function reference in an expression. -/
+/-- A local function reference in an expression. Matches LF in the paper. -/
 abbrev Expr.LocalFn (e : Expr) (n : Nat) : Prop := e.Local n .fn
 
 /-- All references in an expression are less than `n`. -/
 def Expr.Bounded (e : Expr) (n : Nat) : Prop :=
   ∀ ⦃m : Nat⦄ ⦃r : RefKind⦄, e.Local m r → m < n
 
-/-- All references in an expression are in bounds of a given program. -/
+/--
+All references in an expression are in bounds of a given program.
+
+This property holds for any expression that is well typed in the program.
+-/
 abbrev Expr.ValidRefs (e : Expr) (p : Program) : Prop := e.Bounded p.size
 
 @[grind →]
@@ -261,6 +279,11 @@ theorem Expr.Types.validRefs {p : Program} {e : Expr} {t : Ty} (ht : p ⊢ e : t
   intro n r hl
   induction ht with cases hl <;> solve_by_elim
 
+/--
+All references in the program's function bodies are in bounds of the program.
+
+This property holds for any well-typed program.
+-/
 def Program.ValidRefs (p : Program) : Prop :=
   ∀ ⦃i⦄ (_ : i < p.size), p.fn[i].ValidRefs p
 

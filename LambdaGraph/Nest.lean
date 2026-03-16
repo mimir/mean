@@ -27,6 +27,8 @@ The nesting relation between functions in a program.
 
 During substitution, functions nested in the function corresponding to the
 substitution variable need to be rewritten if they are reachable.
+
+This corresponds to the strict nesting relation ≻ in the paper.
 -/
 inductive Program.Nests (p : Program) : Nat → Nat → Prop where
   | free (n m : Nat) (_ : n < p.size) (_ : m < p.size) :
@@ -38,7 +40,11 @@ attribute [grind →] Program.Nests.trans
 notation:40 n:41 " ≻[" p:min "] " m:41 => Program.Nests p n m
 notation:40 n:41 " ⊁[" p:min "] " m:41 => ¬n ≻[p] m
 
-/-- The reflexive closure of the nesting relation. -/
+/--
+The reflexive closure of the nesting relation.
+
+This corresponds to the non-strict nesting relation ≽ in the paper.
+-/
 inductive Program.NestsEq (p : Program) (n : Nat) : Nat → Prop where
   | refl (_ : n < p.size) : NestsEq p n n
   | nests (m : Nat) : Nests p n m → NestsEq p n m
@@ -349,7 +355,7 @@ grind_pattern Program.nestsEq_in_prefix_iff => p.Prefix p', n ≽[p'] m
 Free variables can be pulled back along CFG edges.
 
 This theorem roughly corresponds to Lemma 1, but is formulated in terms of the
-function bodies insted of the functions themselves.
+function bodies instead of the functions themselves.
 -/
 theorem Program.free_in_fn_of_succ {p : Program} {m n k : Nat} (hm : m < p.size)
     (hn : n < p.size) (hne : k ≠ n) (hs : m ⟶[p] n) (hf : p.fn[n].Free p k) :
@@ -361,7 +367,7 @@ theorem Program.free_in_fn_of_succ {p : Program} {m n k : Nat} (hm : m < p.size)
 Free variables can be pulled back along paths through the CFG.
 
 This theorem roughly corresponds to Lemma 2, but is formulated in terms of the
-function bodies insted of the functions themselves.
+function bodies instead of the functions themselves.
 -/
 theorem Program.free_in_fn_of_pathWithout {p : Program} {m n k : Nat}
     (hm : m < p.size) (hk : k < p.size) (hp : m ⟶[p, n]* k)

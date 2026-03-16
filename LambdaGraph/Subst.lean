@@ -43,7 +43,15 @@ abbrev FunMap (n : Nat) := Vector (Option Nat) n
 @[grind unfold]
 def FunMap.mk (n : Nat) : FunMap n := Vector.ofFn fun _ => none
 
-/-- Updates the map to map a given function to a function with a fresh label. -/
+/--
+Updates the map to map a given function to a function with a fresh label.
+
+The fresh label is mapped to itself, indicating that the new function should not
+be substituted in turn. This is required for the termination proof. This is
+correct if all labels appearing in the program and expression are in bounds, as
+this means no reference to the function can appear in the expressions to be
+substituted.
+-/
 def FunMap.update {n : Nat} (fm : FunMap n) (m : Nat)
     (h : m < n := by get_elem_tactic) : FunMap (n + 1) :=
   fm.set m (some n) |>.push (some n)
@@ -62,7 +70,12 @@ def FunMap.Types (p : Program) (fm : FunMap p.size) : Prop :=
   ∀ i (_ : i < p.size) m,
     fm[i] = some m → ∃ (_ : m < p.size), p.ty[i] = p.ty[m] ∧ p.ret[i] = p.ret[m]
 
-/-- The result of a substitution. -/
+/--
+The result of a substitution.
+
+This contains the updated program and expression, the new function map, as well
+as some evidence used in the termination proof.
+-/
 structure SubstResult (p : Program) (fm : FunMap p.size) : Type where
   program : Program
   expr : Expr
@@ -87,6 +100,8 @@ no reason such a procedure could not be implemented).
 noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
     (fm : FunMap p.size) : SubstResult p fm :=
   if ∀ n (_ : n < p.size), e.Free p n → vm[n] = .var n then
+    -- The expression does not contain a free substitution variable, so there is
+    -- nothing to do.
     ⟨p, e, fm, Nat.le_refl _, Nat.le_refl _⟩
   else
     match e with
@@ -95,10 +110,13 @@ noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
       if _ : m < p.size then
         match _ : fm[m] with
         | none =>
+          -- There is not yet a substitution for this function, so we have to
+          -- create a new one.
           let m' := p.size
           let vm₁ := vm.update m
           let fm₁ := fm.update m
-          let p₁ := p.push (recurse m') p.ty[m] p.ret[m] -- temporary body that is always well-typed
+          -- Add a new function with a temporary body that is always well-typed.
+          let p₁ := p.push (recurse m') p.ty[m] p.ret[m]
           have hsize₁ : p.size ≤ p₁.size := by simp [p₁]
           have hum₁ : fm₁.unmapped < fm.unmapped := by
             simp only [FunMap.unmapped, FunMap.update, reduceCtorEq,
@@ -108,17 +126,24 @@ noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
             have : 0 < Vector.countP (fun x => decide (x = none)) fm :=
               Vector.countP_pos_iff.mpr ⟨none, Vector.mem_of_getElem ‹fm[m] = none›, rfl⟩
             omega
+          -- Substitute the body to obtain the body for the new function.
           let ⟨p₂, f', fm₂, hsize₂, hum₂⟩ := p.fn[m].subst p₁ vm₁ fm₁
+          -- Now put the final function body in place.
           let p₃ := p₂.setBody m' f'
           let e' := fn m'
           have hsize : p.size ≤ p₂.size := by omega
           have hum : fm₂.unmapped ≤ fm.unmapped := by omega
           ⟨p₃, e', fm₂, hsize, hum⟩
         | some m' =>
+          -- There is already a substitution for this function, we can reuse it.
           ⟨p, fn m', fm, Nat.le_refl _, Nat.le_refl _⟩
       else
+        -- This case is actually impossible, nonexistent functions don't have
+        -- free variables.
         ⟨p, fn m, fm, Nat.le_refl _, Nat.le_refl _⟩
-    | const c => ⟨p, const c, fm, Nat.le_refl _, Nat.le_refl _⟩
+    | const c =>
+      -- This case is actually impossible, constants don't have free variables.
+      ⟨p, const c, fm, Nat.le_refl _, Nat.le_refl _⟩
     | bin k e₁ e₂ =>
       let ⟨p₁, e₁', fm₁, hsize₁, hum₁⟩ := e₁.subst p vm fm
       let ⟨p₂, e₂', fm₂, hsize₂, hum₂⟩ := e₂.subst p₁ vm.extend fm₁

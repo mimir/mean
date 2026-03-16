@@ -26,12 +26,11 @@ in the repository.
     program and an expression and is used in the small-step reduction relation.
     Labels are simply natural numbers here. For both expressions and programs, a
     predicate `ValidRefs` is defined which states that all labels that appear in
-    expressions actually exist in the program. These assumptions are generally
-    left implicit in the paper, but are needed for a number of theorems. They
-    are implied by typing assumptions. Local variables and functions are also
-    defined here under the name `Local`.
+    expressions actually exist in the program. They are implied by typing
+    assumptions. Local variables and functions are also defined here under the
+    name `Local`.
 
--   Free variables and the nesting relation are defined in
+-   Free variables (`Expr.Free`) and the nesting relation are defined in
     [`LambdaGraph/Nest.lean`]. The strict nesting relation ($\succ$) is called
     `Nests`, while the non-strict version ($\succeq$) is called `NestsEq`. This
     file also defines control-flow successors and dominance. The theorems
@@ -47,8 +46,9 @@ in the repository.
     `Computation.subst_wf`.
 
 -   The small-step reduction is defined in [`LambdaGraph/Step.lean`]. Progress
-    (Theorem 2) is called `progress`, preservation (Theorem 3) is proved in two
-    parts (`Computation.preservation_types` and `Computation.preservation_wf`).
+    (Theorem 2) is called `Computation.progress`, preservation (Theorem 3) is
+    proved in two parts (`Computation.preservation_types` and
+    `Computation.preservation_wf`).
 
 [`LambdaGraph/Basic.lean`]: LambdaGraph/Basic.lean
 [`LambdaGraph/Nest.lean`]: LambdaGraph/Nest.lean
@@ -67,8 +67,14 @@ definitions, which provide more explanations.
     use, or by defining a new function for each let-expression (just like in the
     $\lambda$-calculus).
 
+-   Instead of the branch function `br`, we define conditional expressions.
+
 -   Some theorems have weaker assumptions than their statements in the original
     submission for the paper, as the stronger assumptions turned out to be
-    unnecessary. In particular, there is no well-formedness condition for
-    expressions corresponding to WF-E. These superfluous assumptions have also
-    been dropped in later revisions of the paper.
+    unnecessary. These superfluous assumptions have also been dropped in later
+    revisions of the paper. In particular:
+    *   The reachability assumption has been removed from Theorem 1.
+    *   The typing assumption for the program has been removed from Theorem 2.
+        It is sufficient for the expression to be well-typed.
+    *   The well-formedness condition for expressions WF-E has been removed.
+        Lemma 3 and Theorems 2 and 3 no longer make use of this construct.
