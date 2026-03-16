@@ -155,15 +155,9 @@ theorem Computation.free_of_step_of_free {c c' : Computation} {t : Ty} {n : Nat}
     · exact .binR _ _ _ h
 
 theorem Computation.preservation_closed {c c' : Computation} {t : Ty}
-    (ht : ⊢ c : t) (hwf : c.WF) (hs : c ⇒ c') (hc : c.Closed) : c'.Closed :=
+    (ht : ⊢ c : t) (hwf : c.WF) (hc : c.Closed) (hs : c ⇒ c') : c'.Closed :=
   fun _ hf => hc (free_of_step_of_free ht hwf hs hf)
 
-/--
-Reduction preserves types.
-
-This proves the typing conclusions of Theorem 3 from the paper, the rest is
-`Computation.preservation_wf`.
--/
 theorem Computation.preservation_types {c c' : Computation} {t : Ty}
   (ht : ⊢ c : t) (hs : c ⇒ c') : ⊢ c' : t := by
   obtain ⟨htp, ht⟩ := ht
@@ -173,13 +167,30 @@ theorem Computation.preservation_types {c c' : Computation} {t : Ty}
     cases htf
     solve_by_elim [subst_types]
 
-/--
-Reduction preserves well-formedness.
-
-This proves the well-formedness conclusion of Theorem 3 from the paper, the rest
-is `Computation.preservation_types`.
--/
 theorem Computation.preservation_wf {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
     (hwf : c.WF) (hs : c ⇒ c') : c'.WF := by
   obtain ⟨htp, ht⟩ := ht
   induction hs generalizing t with grind [subst_wf, cases BinKind]
+
+/--
+Reduction preserves types and well-formedness.
+
+Corresponds to Theorem 3 in the paper.
+-/
+theorem Computation.preservation {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
+    (hwf : c.WF) (hs : c ⇒ c') : ⊢ c' : t ∧ c'.WF :=
+  ⟨preservation_types ht hs, preservation_wf ht hwf hs⟩
+
+theorem Computation.preservation_closed_steps {c c' : Computation} {t : Ty}
+    (ht : ⊢ c : t) (hwf : c.WF) (hs : c ⇒* c') (hc : c.Closed) : c'.Closed := by
+  induction hs with grind [preservation, preservation_closed]
+
+theorem Computation.preservation_steps {c c' : Computation} {t : Ty}
+    (ht : ⊢ c : t) (hwf : c.WF) (hs : c ⇒* c') : ⊢ c' : t ∧ c'.WF := by
+  induction hs with grind [preservation]
+
+theorem Computation.soundness {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
+    (hwf : c.WF) (hc : c.Closed) (hs : c ⇒* c') :
+    c'.expr.Value ∨ ∃ c'', c' ⇒ c'' :=
+  progress (preservation_steps ht hwf hs).1.expr_types
+    (preservation_closed_steps ht hwf hs hc)

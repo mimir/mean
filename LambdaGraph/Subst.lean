@@ -1925,7 +1925,7 @@ theorem Program.free_in_fn_of_free_in_subst {p : Program} {e : Expr}
         false_or_by_contra
         rename_i hvmn'
         grind [Nests.free]
-      exact ⟨n', hn', free_in_fn_of_succ hm hl' hne ⟨hm, hlf⟩ hf,
+      exact ⟨n', hn', free_in_fn_of_succ hl' hne ⟨hm, hlf⟩ hf,
         Or.inl ⟨hnn', hvmn' ▸ .var⟩⟩
     · grind
     · rw [subst_fn_eq_of_lt hm] at hlf
@@ -1933,7 +1933,7 @@ theorem Program.free_in_fn_of_free_in_subst {p : Program} {e : Expr}
       replace hne := hpath.ne_start
       replace hf := (free_in_fn_iff hl' hne).mpr ⟨k', hk', hlv, hpath⟩
       obtain ⟨n, hn, hf, h⟩ := ih hl hl' hfml hll' hne hf hk' hlv
-      exact ⟨n, hn, free_in_fn_of_succ hm hl (by grind) ⟨hm, hlf⟩ hf, h⟩
+      exact ⟨n, hn, free_in_fn_of_succ hl (by grind) ⟨hm, hlf⟩ hf, h⟩
 
 theorem Expr.free_of_free_in_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
@@ -2038,12 +2038,6 @@ theorem Computation.free_of_free_in_subst {c : Computation} {n m : Nat}
     rw [hfmk] at hkk'
     contradiction
 
-/--
-Substitution preserves types.
-
-This proves the typing conclusions of Lemma 3 from the paper, the rest is
-`Computation.subst_wf`.
--/
 theorem Computation.subst_types {c : Computation} {t : Ty} {n : Nat} {v : Expr}
     (hn : n < c.size) (ht : ⊢ c : t) (hv : c.toProgram ⊢ v : c.ty[n]) :
     ⊢ c.subst n v : t := by
@@ -2052,14 +2046,18 @@ theorem Computation.subst_types {c : Computation} {t : Ty} {n : Nat} {v : Expr}
   · exact VarMap.mk_types hn hv
   · exact FunMap.mk_types
 
-/--
-Substitution preserves well-formedness.
-
-This proves the well-formedness conclusion of Lemma 3 from the paper, the rest
-is `Computation.subst_types`.
--/
 theorem Computation.subst_wf {c : Computation} {n : Nat} {v : Expr}
     (hp : c.ValidRefs) (hv : v.ValidRefs c.toProgram) (h : c.WF) :
     (c.subst n v).WF :=
   Program.subst_wf (VarMap.valid_mk hv) FunMap.valid_mk hp
     (Program.validSubst_mk h) h
+
+/--
+Substitution preserves types and well-formedness.
+
+Corresponds to Lemma 3 in the paper.
+-/
+theorem Computation.subst_types_and_wf {c : Computation} {n : Nat} {v : Expr}
+    (hn : n < c.size) (ht : ⊢ c : t) (hv : c.toProgram ⊢ v : c.ty[n])
+    (hwf : c.WF) : ⊢ c.subst n v : t ∧ (c.subst n v).WF :=
+  ⟨subst_types hn ht hv, subst_wf ht.program_types.validRefs hv.validRefs hwf⟩

@@ -421,30 +421,42 @@ theorem Program.nestsEq_in_prefix_iff {p p' : Program} {n m : Nat}
 grind_pattern Program.nestsEq_in_prefix_iff => p.Prefix p', n ≽[p] m
 grind_pattern Program.nestsEq_in_prefix_iff => p.Prefix p', n ≽[p'] m
 
-/--
-Free variables can be pulled back along CFG edges.
-
-This theorem roughly corresponds to Lemma 1, but is formulated in terms of the
-function bodies instead of the functions themselves.
--/
-theorem Program.free_in_fn_of_succ {p : Program} {m n k : Nat} (hm : m < p.size)
-    (hn : n < p.size) (hne : k ≠ n) (hs : m ⟶[p] n) (hf : p.fn[n].Free p k) :
-    p.fn[m].Free p k :=
+theorem Program.free_in_fn_of_succ {p : Program} {m n k : Nat} (hn : n < p.size)
+    (hne : k ≠ n) (hs : m ⟶[p] n) (hf : p.fn[n].Free p k) :
+    (p.fn[m]'hs.1).Free p k :=
   have ⟨_, hlf⟩ := hs
   Expr.free_of_localFn_of_free hn hne hlf hf
 
-/--
-Free variables can be pulled back along paths through the CFG.
-
-This theorem roughly corresponds to Lemma 2, but is formulated in terms of the
-function bodies instead of the functions themselves.
--/
 theorem Program.free_in_fn_of_pathWithout {p : Program} {m n k : Nat}
     (hm : m < p.size) (hk : k < p.size) (hp : m ⟶[p, n]* k)
     (hf : p.fn[k].Free p n) : p.fn[m].Free p n := by
   obtain ⟨l, hl, hlv, hp'⟩ := (free_in_fn_iff hk hp.ne_end).mp hf
   apply (free_in_fn_iff hm hp.ne_start).mpr
   exact ⟨l, hl, hlv, pathWithout_trans hp hp'⟩
+
+/--
+Free variables can be pulled back along CFG edges.
+
+Corresponds to Lemma 1 in the paper.
+-/
+theorem Expr.free_in_fn_of_succ {p : Program} {m n k : Nat}
+    (hne : k ≠ m) (hs : m ⟶[p] n) : (fn n).Free p k → (fn m).Free p k
+  | .fn _ hn hne' hf =>
+    .fn _ hs.1 hne (Program.free_in_fn_of_succ hn hne' hs hf)
+
+/--
+Free variables can be pulled back along paths through the CFG.
+
+Corresponds to Lemma 2 in the paper.
+-/
+theorem Expr.free_in_fn_of_pathWithout {p : Program} {m n k : Nat}
+    (hp : m ⟶[p, n]* k) : (fn k).Free p n → (fn m).Free p n
+  | .fn _ hk _ hf =>
+    have hm : m < p.size :=
+      match hp with
+      | .refl _ _ => hk
+      | .step _ _ _ _ hs _ => hs.1
+    .fn _ hm hp.ne_start (Program.free_in_fn_of_pathWithout hm hk hp hf)
 
 theorem Program.dominates_of_nests {p : Program} {m n k : Nat}
     (hwf : p.WF) (hmn : m ≻[p] n) (hnk : n ≻[p] k) : p.Dominates m n k := by
