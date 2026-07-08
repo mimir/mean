@@ -1,6 +1,6 @@
-name = "lambda-graph"
+name = "mean"
 version = "0.1.0"
-defaultTargets = ["LambdaGraph"]
+defaultTargets = ["Mean"]
 
 [[lean_lib]]
-name = "LambdaGraph"
+name = "Mean"

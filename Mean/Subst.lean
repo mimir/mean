@@ -1,4 +1,4 @@
-import LambdaGraph.Nest
+import Mean.Nest
 
 /--
 A map specifying how variables should be substituted.

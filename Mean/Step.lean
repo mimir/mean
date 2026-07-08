@@ -1,4 +1,4 @@
-import LambdaGraph.Subst
+import Mean.Subst
 
 /-- The small-step reduction relation. -/
 inductive Computation.Step : Computation → Computation → Prop where

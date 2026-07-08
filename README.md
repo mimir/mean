@@ -1,4 +1,4 @@
-# lambda-graph
+# mean
 
 This repository contains the Lean formalisation of $\lambda_G$, the graph-based
 $\lambda$-calculus defined in the paper “SSA without Dominance for Higher-Order
@@ -21,7 +21,7 @@ This section describes where definitions and results from the paper can be found
 in the repository.
 
 - The basic language definition and type system is contained in
-  [`LambdaGraph/Basic.lean`]. The types `Expr` and `Program` correspond to
+  [`Mean/Basic.lean`]. The types `Expr` and `Program` correspond to
   expressions and programs in the paper; a `Computation` is a pair consisting of
   a program and an expression and is used in the small-step reduction relation.
   Labels are simply natural numbers here. For both expressions and programs, a
@@ -31,28 +31,28 @@ in the repository.
   name `Local`.
 
 - Free variables (`Expr.Free`) and the nesting relation are defined in
-  [`LambdaGraph/Nest.lean`]. The strict nesting relation ($\succ$) is called
+  [`Mean/Nest.lean`]. The strict nesting relation ($\succ$) is called
   `Nests`, while the non-strict version ($\succeq$) is called `NestsEq`. This
   file also defines control-flow successors and dominance. The theorems
   `Expr.free_in_fn_of_succ` and `Expr.free_in_fn_of_pathWithout` correspond to
   Lemma 1 and Lemma 2 in the paper. Theorem 1 is proved as
   `Program.dominates_of_nestsEq`.
 
-- Substitution is defined in [`LambdaGraph/Subst.lean`]. Here, `Expr.subst` is
+- Substitution is defined in [`Mean/Subst.lean`]. Here, `Expr.subst` is
   the recursive definition of substitution and `Computation.subst` is a
   version that substitutes a single variable with a value, used in the
   substitution lemma and the small-step semantics. The substitution lemma
   (Lemma 3) is proved by `Computation.subst_types_and_wf`.
 
-- The small-step reduction is defined in [`LambdaGraph/Step.lean`]. Progress
+- The small-step reduction is defined in [`Mean/Step.lean`]. Progress
   (Theorem 2) is called `Computation.progress`, preservation (Theorem 3) is
   called `Computation.preservation`. A combined soundness theorem
   (`Computation.soundness`) is also included.
 
-- [`LambdaGraph/Basic.lean`]: LambdaGraph/Basic.lean
-- [`LambdaGraph/Nest.lean`]: LambdaGraph/Nest.lean
-- [`LambdaGraph/Subst.lean`]: LambdaGraph/Subst.lean
-- [`LambdaGraph/Step.lean`]: LambdaGraph/Step.lean
+- [`Mean/Basic.lean`]: Mean/Basic.lean
+- [`Mean/Nest.lean`]: Mean/Nest.lean
+- [`Mean/Subst.lean`]: Mean/Subst.lean
+- [`Mean/Step.lean`]: Mean/Step.lean
 
 ## Differences to the paper
 

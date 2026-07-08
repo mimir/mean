@@ -1,4 +1,4 @@
-import LambdaGraph.Basic
+import Mean.Basic
 
 /--
 The free-variable relation.
