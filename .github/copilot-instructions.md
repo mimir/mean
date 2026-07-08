@@ -14,7 +14,7 @@
 - `Mean/Subst.lean` is the bridge from static structure to evaluation. Substitution is map-based (`VarMap`, `FunMap`) and can extend the program with fresh function labels when a substituted variable is free inside reachable nested functions. Most preservation lemmas here are phrased in terms of `Program.Prefix` because substitution may grow the program while keeping old entries unchanged.
 - `Mean/Step.lean` defines the small-step semantics over `Computation` and proves progress, preservation, and soundness on top of the substitution machinery.
 - The module split mirrors the paper structure: basic syntax and typing, then nesting/dominance, then substitution, then operational semantics.
-- This repo is the Lean formalization of the `λ_G` core that underpins the broader C++ MimIR implementation in `../mimir`. When terminology or intent is unclear, align with the concepts documented there, especially “SSA without dominance”, free-variable nesting, and the long-term goal of a Lean reimplementation of MimIR.
+- This repo is the Lean formalization of the `λ_G` core that underpins the broader C++ MimIR implementation in `../mimir`. When terminology or intent is unclear, align with the concepts documented there, especially “SSA without dominance”, free-variable nesting, and the long-term goal of a Lean reimplementation of MimIR. That long-term vision is spelled out in `README.md`.
 
 ## Key conventions
 
@@ -24,3 +24,4 @@
 - Substitution is not simple tree replacement. It may clone reachable nested functions, assign fresh labels, and return a larger program. Reuse `Expr.subst`, `Computation.subst`, `VarMap`, `FunMap`, and the existing prefix-preservation lemmas instead of inventing ad hoc substitution helpers.
 - The codebase leans heavily on Lean automation: `simp`, `grind`, `grind_pattern`, `solve_by_elim`, `omega`, `lia`, and `fun_induction` are part of the normal proof style. New lemmas are more useful when they are phrased so this automation can consume them, and when appropriate they should be registered with the same attributes as nearby lemmas.
 - Keep the established notation and naming from the paper and the code: `Nests`/`NestsEq` for strict/non-strict nesting, Unicode notations such as `⊢`, `⇒`, `⇒*`, `≻`, `≽`, and `⟶`, and theorem names that closely track the formal statement they prove.
+- Keep `README.md`, this file, and `CLAUDE.md` consistent when the architecture or conventions change. `CLAUDE.md` intentionally only references this file, so all shared guidance belongs here.
