@@ -6,6 +6,42 @@ Programs”. It contains proofs of the lemmas and theorems in the paper, in
 particular the relationship between nesting and dominance and basic soundness
 results.
 
+## Vision: MimIR in Lean
+
+The formalisation in this repository is the first step towards a much larger
+goal: a full **reimplementation of [MimIR](https://github.com/mimir/mimir) in
+[Lean](https://lean-lang.org)**.
+
+MimIR is a pure, graph-based, higher-order intermediate representation rooted in
+the Calculus of Constructions. Its structural foundation — free-variable nesting
+instead of CFG dominance — is exactly the theory that $\lambda_G$ formalises
+here. Today MimIR is written in C++, where its type checker, normalizers, and
+transformations are trusted but unverified.
+
+Reimplementing MimIR in Lean lets the *specification* and the *implementation*
+live in the same language:
+
+- **One source of truth.** The metatheory in this repository (typing,
+  substitution, nesting/dominance, progress, and preservation) becomes the
+  ground on which the implementation is built, rather than a separate paper
+  artefact that can drift from the code.
+- **Verified core.** Type checking, β-reduction/normalization, and the core
+  rewrites can be proved correct against the semantics — turning today's trusted
+  C++ kernel into a machine-checked one.
+- **Executable formalisation.** Lean is both a proof assistant and a programming
+  language, so the same definitions that we reason about can be compiled and run,
+  closing the gap between "the model" and "the compiler".
+- **Extensibility with guarantees.** MimIR's plugin/axiom architecture
+  (domain-specific types, normalizers, and phases) can be given typed interfaces and
+  correctness obligations, so extensions inherit soundness by construction.
+
+The path from here to there is incremental. `mean` currently covers the
+graph-based λ-calculus core; future work grows it towards MimIR's full feature
+set — dependent types, parametric and higher-kinded polymorphism, the
+sea-of-nodes representation with hash-consing and on-the-fly normalization, and
+eventually plugins and lowering. The documentation and module structure below
+will evolve alongside that effort.
+
 ## Checking the proofs
 
 The Lean version manager `elan` needs to be installed. The project can then be
