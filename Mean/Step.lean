@@ -40,22 +40,22 @@ namespace Computation
 
 theorem size_le_of_step {c c' : Computation} (h : c ⇒ c') :
     c.size ≤ c'.size := by
-  induction h with simp [subst, SubstResult.size_ge, *]
+  induction h with grind [subst]
 
 theorem lt_size_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
     (h : c ⇒ c') : n < c'.size := Nat.lt_of_lt_of_le hn (size_le_of_step h)
 
 theorem fn_eq_of_step {c c' : Computation} (h : c ⇒ c') {n : Nat}
     (hn : n < c.size) : c'.fn[n]'(lt_size_of_step hn h) = c.fn[n] := by
-  induction h with simp [subst, Program.subst_fn_eq_of_lt hn, *]
+  induction h with simp [subst, Program.prefix_subst.fn_eq hn, *]
 
 theorem ty_eq_of_step {c c' : Computation} (h : c ⇒ c') {n : Nat}
     (hn : n < c.size) : c'.ty[n]'(lt_size_of_step hn h) = c.ty[n] := by
-  induction h with simp [subst, Program.subst_ty_eq_of_lt hn, *]
+  induction h with simp [subst, Program.prefix_subst.ty_eq hn, *]
 
 theorem ret_eq_of_step {c c' : Computation} (h : c ⇒ c') {n : Nat}
     (hn : n < c.size) : c'.ret[n]'(lt_size_of_step hn h) = c.ret[n] := by
-  induction h with simp [subst, Program.subst_ret_eq_of_lt hn, *]
+  induction h with simp [subst, Program.prefix_subst.ret_eq hn, *]
 
 @[grind →]
 theorem prefix_of_step {c c' : Computation} (h : c ⇒ c') :

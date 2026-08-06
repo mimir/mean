@@ -173,6 +173,12 @@ theorem Expr.lt_size_of_free {p : Program} {e : Expr} {n : Nat}
   induction hf with simp_all <;> solve_by_elim
 
 @[grind →]
+theorem Expr.lt_size_of_pathWithout {p : Program} {n m k : Nat}
+    (hp : p.ValidRefs) (hn : n < p.size) : n ⟶[p, m]* k → k < p.size
+  | .refl _ _ => hn
+  | .step n _ k _ hs hpath => lt_size_of_pathWithout hp (hp hn hs.2) hpath
+
+@[grind →]
 theorem Program.lt_size_left_of_nests {p : Program} {m n : Nat} :
     m ≻[p] n → m < p.size
   | .free _ _ hn _ _ _ => hn
