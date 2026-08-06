@@ -267,12 +267,24 @@ abbrev Expr.LocalFn (e : Expr) (n : Nat) : Prop := e.Local n .fn
 def Expr.Bounded (e : Expr) (n : Nat) : Prop :=
   ∀ ⦃m : Nat⦄ ⦃r : RefKind⦄, e.Local m r → m < n
 
+@[grind →]
+theorem Bounded.lt {n : Nat} {e : Expr} {m : Nat} {r : RefKind}
+    (he : e.Bounded n) (h : e.Local m r) : m < n := he h
+
+theorem Expr.bounded_of_ge {n₁ n₂ : Nat} {e : Expr}
+    (hle : n₁ ≤ n₂) (h : e.Bounded n₁) : e.Bounded n₂ :=
+  fun _ _ hl => Nat.lt_of_lt_of_le (h hl) hle
+
 /--
 All references in an expression are in bounds of a given program.
 
 This property holds for any expression that is well typed in the program.
 -/
 abbrev Expr.ValidRefs (e : Expr) (p : Program) : Prop := e.Bounded p.size
+
+@[grind →]
+theorem Expr.validRefs_of_prefix {p p' : Program} {e : Expr} (h : p.Prefix p')
+    (he : e.ValidRefs p) : e.ValidRefs p' := bounded_of_ge h.size_le he
 
 @[grind →]
 theorem Expr.Types.validRefs {p : Program} {e : Expr} {t : Ty} (ht : p ⊢ e : t)
@@ -312,10 +324,6 @@ theorem Expr.value_types_prod {p : Program} {v : Expr} {t₁ t₂ : Ty}
     (h : p ⊢ v : t₁.prod t₂) : v.Value →
       ∃ v₁ v₂, v = .pair v₁ v₂ ∧ v₁.Value ∧ v₂.Value
   | .pair v₁ v₂ hv₁ hv₂ => ⟨v₁, v₂, rfl, hv₁, hv₂⟩
-
-@[grind →]
-theorem Expr.lt_size_of_local {p : Program} {e : Expr} {n : Nat} {r : RefKind}
-    (he : e.ValidRefs p) (h : e.Local n r) : n < p.size := he h
 
 theorem Program.validRefs_fn {p : Program} {n : Nat} (hn : n < p.size)
     (hp : p.ValidRefs) : p.fn[n].ValidRefs p := hp hn
@@ -488,21 +496,20 @@ theorem Expr.proj_types_iff {p : Program} {e : Expr} {i : Fin 2} {t : Ty} :
     | proj1 _ t' _ h => exact ⟨t', Or.inr ⟨rfl, h⟩⟩
   · rintro ⟨t', ⟨rfl, h⟩ | ⟨rfl, h⟩⟩ <;> constructor <;> assumption
 
-@[grind .]
-theorem Expr.bounded_of_ge {n₁ n₂ : Nat} {e : Expr}
-    (hle : n₁ ≤ n₂) (h : e.Bounded n₁) : e.Bounded n₂ :=
-  fun _ _ hl => Nat.lt_of_lt_of_le (h hl) hle
+@[refl]
+theorem Program.prefix_rfl {p : Program} : p.Prefix p :=
+  by constructor <;> grind
 
 @[grind →]
 theorem Program.prefix_trans {p p' p'' : Program} (h : p.Prefix p')
     (h' : p'.Prefix p'') : p.Prefix p'' := by
+  cases h'
   constructor <;> grind
 
+@[grind! .]
 theorem Program.prefix_push {p : Program} {b : Expr} {t₁ t₂ : Ty} :
     p.Prefix (p.push b t₁ t₂) := by
   constructor <;> simp_all
-
-grind_pattern Program.prefix_push => p.push b t₁ t₂
 
 theorem Expr.types_in_prefix_iff {p p' : Program} {e : Expr} {t : Ty}
     (he : e.ValidRefs p) (h : p.Prefix p') : p' ⊢ e : t ↔ p ⊢ e : t := by
@@ -526,7 +533,7 @@ theorem Program.types_push {p : Program} {b : Expr} {t₁ t₂ : Ty} (hp : ⊢ p
   · simp [*]
   · replace hi : i < p.size := by lia
     apply Expr.types_in_push_of_types
-    simp [push, *]
+    simp [*]
     exact hp hi
 
 theorem Expr.validRefs_in_push {p : Program} {e b : Expr} {t₁ t₂ : Ty}
@@ -551,4 +558,4 @@ theorem Program.validRefs_setBody {p : Program} {i : Nat} {b : Expr}
   by_cases i = j
   · simp [*]
   · simp only [ne_eq, not_false_eq_true, Vector.getElem_set_ne, *]
-    apply Expr.bounded_of_ge (by simp) (h hj)
+    exact Expr.bounded_of_ge (by simp) (h hj)

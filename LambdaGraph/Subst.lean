@@ -30,232 +30,6 @@ must have the variable's declared type.
 def VarMap.Types (p : Program) (vm : VarMap p.size) : Prop :=
   ∀ i (_ : i < p.size), p ⊢ vm[i] : p.ty[i]
 
-/--
-A map specifying how function references should be substituted.
-
-Function labels for which no new mapping exists yet are mapped to none, while
-functions introduced during substitution are mapped to themselves. This
-distinction is necessary to support the termination proof for substitution.
--/
-abbrev FunMap (n : Nat) := Vector (Option Nat) n
-
-/-- Creates a new function map of size `n`. -/
-@[grind unfold]
-def FunMap.mk (n : Nat) : FunMap n := Vector.ofFn fun _ => none
-
-/--
-Updates the map to map a given function to a function with a fresh label.
-
-The fresh label is mapped to itself, indicating that the new function should not
-be substituted in turn. This is required for the termination proof. This is
-correct if all labels appearing in the program and expression are in bounds, as
-this means no reference to the function can appear in the expressions to be
-substituted.
--/
-def FunMap.update {n : Nat} (fm : FunMap n) (m : Nat)
-    (h : m < n := by get_elem_tactic) : FunMap (n + 1) :=
-  fm.set m (some n) |>.push (some n)
-
-/-- Counts the number of function labels that might still be remapped. -/
-def FunMap.unmapped {n : Nat} (fm : FunMap n) : Nat :=
-  fm.countP (· = none)
-
-/--
-The typing predicate for function maps.
-
-For a function map to be well-typed, replacement functions must have the same
-type as their original.
--/
-def FunMap.Types (p : Program) (fm : FunMap p.size) : Prop :=
-  ∀ i (_ : i < p.size) m,
-    fm[i] = some m → ∃ (_ : m < p.size), p.ty[i] = p.ty[m] ∧ p.ret[i] = p.ret[m]
-
-/--
-The result of a substitution.
-
-This contains the updated program and expression, the new function map, as well
-as some evidence used in the termination proof.
--/
-structure SubstResult (p : Program) (fm : FunMap p.size) : Type where
-  program : Program
-  expr : Expr
-  funMap : FunMap program.size
-  size_ge : p.size ≤ program.size
-  unmapped_le : funMap.unmapped ≤ fm.unmapped
-
-open Classical in
-/--
-Makes substitutions in an expression according to the given maps.
-
-The expression may include references to functions in which a substitution
-variable occurs free. For these functions, new versions need to be added to the
-program, with their bodies substituted in the same way. In addition to the new
-program and expression, this function returns a new function map to allow
-reusing the newly created functions across subexpressions.
-
-This definition is `noncomputable` as we have not defined a decision procedure
-to decide if an expression contains a free substitution variable (but there is
-no reason such a procedure could not be implemented).
--/
-noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
-    (fm : FunMap p.size) : SubstResult p fm :=
-  if ∀ n (_ : n < p.size), e.Free p n → vm[n] = .var n then
-    -- The expression does not contain a free substitution variable, so there is
-    -- nothing to do.
-    ⟨p, e, fm, Nat.le_refl _, Nat.le_refl _⟩
-  else
-    match e with
-    | var m => ⟨p, vm[m]?.getD (var m), fm, Nat.le_refl _, Nat.le_refl _⟩
-    | fn m =>
-      if _ : m < p.size then
-        match _ : fm[m] with
-        | none =>
-          -- There is not yet a substitution for this function, so we have to
-          -- create a new one.
-          let m' := p.size
-          let vm₁ := vm.update m
-          let fm₁ := fm.update m
-          -- Add a new function with a temporary body that is always well-typed.
-          let p₁ := p.push (recurse m') p.ty[m] p.ret[m]
-          have hsize₁ : p.size ≤ p₁.size := by simp [p₁]
-          have hum₁ : fm₁.unmapped < fm.unmapped := by
-            simp only [FunMap.unmapped, FunMap.update, reduceCtorEq,
-              decide_false, Bool.false_eq_true, not_false_eq_true,
-              Vector.countP_push_of_neg, Vector.countP_set, decide_true,
-              ↓reduceIte, Nat.add_zero, fm₁, *]
-            have : 0 < Vector.countP (fun x => decide (x = none)) fm :=
-              Vector.countP_pos_iff.mpr ⟨none, Vector.mem_of_getElem ‹fm[m] = none›, rfl⟩
-            omega
-          -- Substitute the body to obtain the body for the new function.
-          let ⟨p₂, f', fm₂, hsize₂, hum₂⟩ := p.fn[m].subst p₁ vm₁ fm₁
-          -- Now put the final function body in place.
-          let p₃ := p₂.setBody m' f'
-          let e' := fn m'
-          have hsize : p.size ≤ p₂.size := by omega
-          have hum : fm₂.unmapped ≤ fm.unmapped := by omega
-          ⟨p₃, e', fm₂, hsize, hum⟩
-        | some m' =>
-          -- There is already a substitution for this function, we can reuse it.
-          ⟨p, fn m', fm, Nat.le_refl _, Nat.le_refl _⟩
-      else
-        -- This case is actually impossible, nonexistent functions don't have
-        -- free variables.
-        ⟨p, fn m, fm, Nat.le_refl _, Nat.le_refl _⟩
-    | const c =>
-      -- This case is actually impossible, constants don't have free variables.
-      ⟨p, const c, fm, Nat.le_refl _, Nat.le_refl _⟩
-    | bin k e₁ e₂ =>
-      let ⟨p₁, e₁', fm₁, hsize₁, hum₁⟩ := e₁.subst p vm fm
-      let ⟨p₂, e₂', fm₂, hsize₂, hum₂⟩ := e₂.subst p₁ vm.extend fm₁
-      ⟨p₂, e₁'.bin k e₂', fm₂, by omega, by omega⟩
-    | cond c et ef =>
-      let ⟨p₁, c', fm₁, hsize₁, hum₁⟩ := c.subst p vm fm
-      let vm₁ := vm.extend
-      let ⟨p₂, et', fm₂, hsize₂, hum₂⟩ := et.subst p₁ vm₁ fm₁
-      let ⟨p₃, ef', fm₃, hsize₃, hum₃⟩ := ef.subst p₂ vm₁.extend fm₂
-      ⟨p₃, c'.cond et' ef', fm₃, by omega, by omega⟩
-    | proj e i =>
-      let ⟨p', e', fm', hsize, hum⟩ := e.subst p vm fm
-      ⟨p', e'.proj i, fm', hsize, hum⟩
-termination_by (fm.unmapped, e)
-decreasing_by all_goals grind
-
-/-- Substitutes a value for a variable in a computation. -/
-noncomputable def Computation.subst (p : Computation) (n : Nat) (v : Expr) :
-    Computation :=
-  let ⟨p', e', _, _, _⟩ := p.expr.subst p.toProgram (.mk _ n v) (.mk _)
-  ⟨p', e'⟩
-
-@[simp]
-theorem Program.subst_fn_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
-    let ⟨p', _, _, hsize, _⟩ := e.subst p vm fm
-    p'.fn[n] = p.fn[n] := by
-  fun_induction Expr.subst <;> dsimp only at *
-  next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
-    rw [hs₂] at ih
-    grind
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ hsize₁ hum₁ hs₁ p₂ e₂' fm₂ hsize₂ hum₂ hs₂
-      h ih₁ ih₂ =>
-    rw [hs₁] at ih₁
-    rw [hs₂] at ih₂
-    grind
-  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
-      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
-    rw [hs₁] at ihc
-    rw [hs₂] at ihet
-    rw [hs₃] at ihef
-    grind
-  next p vm fm e i p' e' fm' hsize hum hs h ih =>
-    rw [hs] at ih
-    grind
-
-@[simp]
-theorem Program.subst_ty_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
-    let ⟨p', _, _, hsize, _⟩ := e.subst p vm fm
-    p'.ty[n] = p.ty[n] := by
-  fun_induction Expr.subst <;> dsimp only at *
-  next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
-    rw [hs₂] at ih
-    grind
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ hsize₁ hum₁ hs₁ p₂ e₂' fm₂ hsize₂ hum₂ hs₂
-      h ih₁ ih₂ =>
-    rw [hs₁] at ih₁
-    rw [hs₂] at ih₂
-    grind
-  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
-      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
-    rw [hs₁] at ihc
-    rw [hs₂] at ihet
-    rw [hs₃] at ihef
-    grind
-  next p vm fm e i p' e' fm' hsize hum hs h ih =>
-    rw [hs] at ih
-    grind
-
-@[simp]
-theorem Program.subst_ret_eq_of_lt {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} {n : Nat} (hn : n < p.size) :
-    let ⟨p', _, _, hsize, _⟩ := e.subst p vm fm
-    p'.ret[n] = p.ret[n] := by
-  fun_induction Expr.subst <;> dsimp only at *
-  next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
-    rw [hs₂] at ih
-    grind
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ hsize₁ hum₁ hs₁ p₂ e₂' fm₂ hsize₂ hum₂ hs₂
-      h ih₁ ih₂ =>
-    rw [hs₁] at ih₁
-    rw [hs₂] at ih₂
-    grind
-  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
-      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
-    rw [hs₁] at ihc
-    rw [hs₂] at ihet
-    rw [hs₃] at ihef
-    grind
-  next p vm fm e i p' e' fm' hsize hum hs h ih =>
-    rw [hs] at ih
-    grind
-
-theorem Program.prefix_subst {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} : p.Prefix (e.subst p vm fm).program := by
-  constructor
-  · exact subst_fn_eq_of_lt
-  · exact subst_ty_eq_of_lt
-  · exact subst_ret_eq_of_lt
-  · exact (e.subst p vm fm).size_ge
-
-grind_pattern Program.prefix_subst => (e.subst p vm fm).program
-
-theorem Expr.types_in_subst_of_types {p : Program} {e₁ e₂ : Expr} {t : Ty}
-    {vm : VarMap p.size} {fm : FunMap p.size} (ht : p ⊢ e₁ : t) :
-    (e₂.subst p vm fm).program ⊢ e₁ : t :=
-  (types_in_prefix_iff ht.validRefs Program.prefix_subst).mpr ht
-
 namespace VarMap
 
 @[simp]
@@ -314,6 +88,825 @@ theorem extend_extend {m n k : Nat} {vm : VarMap m} (h : m ≤ n) :
   · have : ¬i < m := by lia
     simp [extend, *]
 
+end VarMap
+
+/--
+A map specifying how function references should be substituted.
+
+Function labels for which no new mapping exists yet are mapped to none, while
+functions introduced during substitution are mapped to themselves. This
+distinction is necessary to support the termination proof for substitution.
+-/
+abbrev FunMap (n : Nat) := Vector Nat n
+
+/-- Creates a new function map of size `n`. -/
+@[grind unfold]
+def FunMap.mk (n : Nat) : FunMap n := Vector.ofFn (·)
+
+/--
+Updates the map to map a given function to a function with a fresh label.
+
+The fresh label is mapped to itself, indicating that the new function should not
+be substituted in turn. This is required for the termination proof. This is
+correct if all labels appearing in the program and expression are in bounds, as
+this means no reference to the function can appear in the expressions to be
+substituted.
+-/
+def FunMap.update {n : Nat} (fm : FunMap n) (m : Nat)
+    (h : m < n := by get_elem_tactic) : FunMap (n + 1) :=
+  fm.set m n |>.push n
+
+/--
+The typing predicate for function maps.
+
+For a function map to be well-typed, replacement functions must have the same
+type as their original.
+-/
+def FunMap.Types (p : Program) (fm : FunMap p.size) : Prop :=
+  ∀ i (_ : i < p.size),
+    ∃ (_ : fm[i] < p.size), p.ty[i] = p.ty[fm[i]] ∧ p.ret[i] = p.ret[fm[i]]
+
+namespace FunMap
+
+@[simp]
+theorem getElem_update_size {n : Nat} {fm : FunMap n} {m : Nat} (hm : m < n) :
+    (fm.update m hm)[n] = n := by simp [update]
+
+@[simp]
+theorem getElem_update_eq {n : Nat} {fm : FunMap n} {m : Nat} (hm : m < n) :
+    (fm.update m hm)[m] = n := by simp [update, *]
+
+@[simp]
+theorem getElem_update_ne {n : Nat} {fm : FunMap n} {m i : Nat} (hm : m < n)
+    (hi : i < n) (hne : m ≠ i) : (fm.update m hm)[i] = fm[i] := by simp [update, *]
+
+@[grind =]
+theorem getElem_update {n : Nat} {fm : FunMap n} {m i : Nat} (hm : m < n)
+    (hi : i ≤ n) :
+    (fm.update m hm)[i] = if _ : n = i ∨ m = i then n else fm[i] := by
+  split
+  next h =>
+    cases h
+    · simp [← ‹n = i›]
+    · simp [*]
+  next h =>
+    replace hi : i < n := by lia
+    have : m ≠ i := by simp_all
+    simp_all
+
+end FunMap
+
+def Program.UsesFn (p : Program) (m : Nat) : Prop :=
+  ∃ (i : Nat) (_ : i < p.size), p.fn[i].LocalFn m
+
+def VarMap.UsesFn {n : Nat} (vm : VarMap n) (m : Nat) : Prop :=
+  ∃ (i : Nat) (_ : i < n), vm[i].LocalFn m
+
+def FunMap.Contains {n : Nat} (fm : FunMap n) (m : Nat) : Prop :=
+  ∃ (i : Nat) (_ : i < n), fm[i] = m
+
+@[grind →]
+theorem Program.usesFn_push {p : Program} {b : Expr} {t₁ t₂ : Ty} {m : Nat}
+    (h : (p.push b t₁ t₂).UsesFn m) :
+    p.UsesFn m ∨ b.LocalFn m := by
+  grind [UsesFn]
+
+@[grind →]
+theorem Program.usesFn_setBody {p : Program} {i : Nat} {b : Expr} {m : Nat}
+    (hi : i < p.size) (h : (p.setBody i b hi).UsesFn m) :
+    p.UsesFn m ∨ b.LocalFn m := by
+  grind [UsesFn]
+
+@[grind →]
+theorem VarMap.usesFn_update {n : Nat} {vm : VarMap n} {m k : Nat} (hm : m < n)
+    (h : (vm.update m hm).UsesFn k) : vm.UsesFn k := by
+  grind [UsesFn]
+
+@[grind →]
+theorem VarMap.usesFn_extend {n n' : Nat} {vm : VarMap n} {m : Nat}
+    (h : (vm.extend (n' := n')).UsesFn m) : vm.UsesFn m := by
+  grind [UsesFn]
+
+@[grind →]
+theorem FunMap.contains_update {n : Nat} {fm : FunMap n} {m k : Nat}
+    (hm : m < n) (h : (fm.update m hm).Contains k) : fm.Contains k ∨ n = k := by
+  grind [Contains]
+
+namespace Termination
+
+inductive Occurs (p : Program) (vm : VarMap p.size) (fm : FunMap p.size)
+    (n : Nat) : Prop where
+  | program (_ : p.UsesFn n)
+  | varMap (_ : vm.UsesFn n)
+  | funMap (_ : fm.Contains n)
+
+def OccursProvenance (p p' : Program) (vm : VarMap p.size)
+    (vm' : VarMap p'.size) (fm : FunMap p.size) (fm' : FunMap p'.size) : Prop :=
+  ∀ ⦃n⦄, Occurs p' vm' fm' n → Occurs p vm fm n ∨ n < p'.size
+
+@[grind →]
+theorem OccursProvenance.apply  {p p' : Program} {vm : VarMap p.size}
+    {vm' : VarMap p'.size} {fm : FunMap p.size} {fm' : FunMap p'.size} {n : Nat}
+    (hp : OccursProvenance p p' vm vm' fm fm') (h : Occurs p' vm' fm' n) :
+    Occurs p vm fm n ∨ n < p'.size := hp h
+
+@[scoped grind →]
+theorem occursProvenance_program {p p' : Program} {vm : VarMap p.size}
+    {vm' : VarMap p'.size} {fm : FunMap p.size} {fm' : FunMap p'.size} {n : Nat}
+    (hp : OccursProvenance p p' vm vm' fm fm') (h : p'.UsesFn n) :
+    Occurs p vm fm n ∨ n < p'.size := hp (.program h)
+
+@[scoped grind →]
+theorem occursProvenance_varMap {p p' : Program} {vm : VarMap p.size}
+    {vm' : VarMap p'.size} {fm : FunMap p.size} {fm' : FunMap p'.size} {n : Nat}
+    (hp : OccursProvenance p p' vm vm' fm fm') (h : vm'.UsesFn n) :
+    Occurs p vm fm n ∨ n < p'.size := hp (.varMap h)
+
+@[scoped grind →]
+theorem occursProvenance_funMap {p p' : Program} {vm : VarMap p.size}
+    {vm' : VarMap p'.size} {fm : FunMap p.size} {fm' : FunMap p'.size} {n : Nat}
+    (hp : OccursProvenance p p' vm vm' fm fm') (h : fm'.Contains n) :
+    Occurs p vm fm n ∨ n < p'.size := hp (.funMap h)
+
+@[simp, scoped grind .]
+theorem occursProvenance_refl {p : Program} {vm : VarMap p.size}
+    {fm : FunMap p.size} : OccursProvenance p p vm vm fm fm :=
+  fun _ h => .inl h
+
+@[scoped grind →]
+theorem occursProvenance_trans {p p' p'' : Program}
+    {vm : VarMap p.size} {vm' : VarMap p'.size} {vm'' : VarMap p''.size}
+    {fm : FunMap p.size} {fm' : FunMap p'.size} {fm'' : FunMap p''.size}
+    (hpre : p'.Prefix p'') (hp : OccursProvenance p p' vm vm' fm fm')
+    (hp' : OccursProvenance p' p'' vm' vm'' fm' fm'') :
+    OccursProvenance p p'' vm vm'' fm fm'' := by
+  intro n h
+  grind [Occurs]
+
+theorem occursProvenance_push {p : Program} {vm : VarMap p.size}
+    {fm : FunMap p.size} {b : Expr} {t₁ t₂ : Ty} {m : Nat} (hm : m < p.size)
+    (hb : b.Bounded (p.size + 1)) :
+    OccursProvenance p (p.push b t₁ t₂) vm (vm.update m hm) fm (fm.update m hm) := by
+  intro n h
+  grind [Occurs]
+
+def ExprProvenance (p p' : Program) (e e' : Expr) (vm : VarMap p.size)
+    (fm : FunMap p.size) : Prop :=
+  ∀ ⦃n⦄, e'.LocalFn n → e.LocalFn n ∨ Occurs p vm fm n ∨ n < p'.size
+
+@[grind →]
+theorem ExprProvenance.apply {p p' : Program} {e e' : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} {n : Nat} (hp : ExprProvenance p p' e e' vm fm)
+    (h : e'.LocalFn n) : e.LocalFn n ∨ Occurs p vm fm n ∨ n < p'.size := hp h
+
+@[simp, grind .]
+theorem exprProvenance_refl {p p' : Program} (e : Expr) {vm : VarMap p.size}
+    {fm : FunMap p.size} : ExprProvenance p p' e e vm fm := fun _ => Or.inl
+
+@[scoped grind →]
+theorem exprProvenance_of_prefix {p p' p'' : Program} {e e' : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} (hpre : p'.Prefix p'')
+    (h : ExprProvenance p p' e e' vm fm) : ExprProvenance p p'' e e' vm fm := by
+  grind [ExprProvenance]
+
+@[scoped grind →]
+theorem exprProvenance_of_occursProvenance_of_exprProvenance {p p' p'' : Program}
+    {e e' : Expr} {vm : VarMap p.size} {vm' : VarMap p'.size}
+    {fm : FunMap p.size} {fm' : FunMap p'.size}
+    (hpre : p'.Prefix p'') (ho : OccursProvenance p p' vm vm' fm fm')
+    (he : ExprProvenance p' p'' e e' vm' fm') : ExprProvenance p p'' e e' vm fm := by
+  intro n h
+  grind
+
+@[scoped grind .]
+theorem exprProvenance_var {p p' : Program} {m : Nat} {vm : VarMap p.size}
+    {fm : FunMap p.size} :
+    ExprProvenance p p' (.var m) (vm[m]?.getD (.var m)) vm fm := by
+  intro n h
+  grind [Occurs, VarMap.UsesFn]
+
+@[scoped grind .]
+theorem exprProvenance_fn {p p' : Program} {m : Nat} {vm : VarMap p.size}
+    {fm : FunMap p.size} (h : m < p.size) :
+    ExprProvenance p p' (.fn m) (.fn fm[m]) vm fm := by
+  intro n h
+  grind [Occurs, FunMap.Contains]
+
+@[scoped grind .]
+theorem exprProvenance_bin {p p' : Program} {k : BinKind} {e₁ e₁' e₂ e₂' : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size}
+    (h₁ : ExprProvenance p p' e₁ e₁' vm fm)
+    (h₂ : ExprProvenance p p' e₂ e₂' vm fm) :
+    ExprProvenance p p' (e₁.bin k e₂) (e₁'.bin k e₂') vm fm := by
+  intro n h
+  grind
+
+@[scoped grind .]
+theorem exprProvenance_cond {p p' : Program} {c c' et et' ef ef' : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size}
+    (hc : ExprProvenance p p' c c' vm fm)
+    (het : ExprProvenance p p' et et' vm fm)
+    (hef : ExprProvenance p p' ef ef' vm fm) :
+    ExprProvenance p p' (c.cond et ef) (c'.cond et' ef') vm fm := by
+  intro n h
+  grind
+
+@[scoped grind .]
+theorem exprProvenance_proj {p p' : Program} {e e' : Expr} {i : Fin 2}
+    {vm : VarMap p.size} {fm : FunMap p.size}
+    (hp : ExprProvenance p p' e e' vm fm) :
+    ExprProvenance p p' (e.proj i) (e'.proj i) vm fm := by
+  intro n h
+  grind
+
+end Termination
+
+inductive Expr.Reachable (p : Program) (n : Nat) : Expr → Prop where
+  | here (e : Expr) : e.LocalFn n → e.Reachable p n
+  | there (e : Expr) (m : Nat) (_ : m < p.size) :
+    e.LocalFn m → p.fn[m].Reachable p n → e.Reachable p n
+
+@[grind →]
+theorem Expr.lt_of_reachable {p : Program} {e : Expr} {n : Nat}
+    (hp : p.ValidRefs) (he : e.ValidRefs p) (h : e.Reachable p n) :
+    n < p.size := by
+  induction h with grind
+
+@[simp, grind .]
+theorem Expr.not_reachable_var {p : Program} {m n : Nat} :
+    ¬(var m).Reachable p n := nofun
+
+@[simp, grind =]
+theorem Expr.reachable_fn_iff {p : Program} {m n : Nat} :
+    (fn m).Reachable p n ↔ m = n ∨ ∃ (hm : m < p.size), p.fn[m].Reachable p n := by
+  grind [Reachable]
+
+@[simp, grind .]
+theorem Expr.not_reachable_const {p : Program} {c : Const} {n : Nat} :
+    ¬(const c).Reachable p n := nofun
+
+@[simp, grind =]
+theorem Expr.reachable_bin_iff {p : Program} {k : BinKind} {e₁ e₂ : Expr} {n : Nat} :
+    (e₁.bin k e₂).Reachable p n ↔ e₁.Reachable p n ∨ e₂.Reachable p n := by
+  grind [Reachable]
+
+@[simp, grind =]
+theorem Expr.reachable_cond_iff {p : Program} {c et ef : Expr} {n : Nat} :
+    (c.cond et ef).Reachable p n ↔ c.Reachable p n ∨ et.Reachable p n ∨ ef.Reachable p n := by
+  grind [Reachable]
+
+@[simp, grind =]
+theorem Expr.reachable_proj_iff {p : Program} {e : Expr} {i : Fin 2} {n : Nat} :
+    (e.proj i).Reachable p n ↔ e.Reachable p n := by
+  grind [Reachable]
+
+def Expr.DeepValidFns (e : Expr) (p : Program) : Prop :=
+  ∀ ⦃n⦄, e.Reachable p n → n < p.size
+
+theorem Expr.reachable_in_prefix_iff {p p' : Program} {e : Expr} {n : Nat}
+    (he : e.DeepValidFns p) (h : p.Prefix p') :
+    e.Reachable p' n ↔ e.Reachable p n := by
+  constructor <;> intro hr
+  · induction hr with
+    | here e hl => exact .here _ hl
+    | there e m hm hl hr ih =>
+      replace hm := he (.here _ hl)
+      rw [h.fn_eq hm] at ih
+      refine .there _ _ hm hl (ih ?_)
+      intro k hrk
+      exact he (.there _ _ hm hl hrk)
+  · induction hr with
+    | here e hl => exact .here _ hl
+    | there e m hm hl hr ih =>
+      rw [← h.fn_eq hm] at ih
+      refine .there _ _ (by grind) hl (ih ?_)
+      intro k hrk
+      rw [h.fn_eq hm] at hrk
+      exact he (.there _ _ hm hl hrk)
+
+grind_pattern Expr.reachable_in_prefix_iff => p.Prefix p', e.Reachable p n
+grind_pattern Expr.reachable_in_prefix_iff => p.Prefix p', e.Reachable p' n
+
+theorem Expr.reachable_mono {p : Program} {e e' : Expr} {n : Nat}
+    (h : ∀ m, e.LocalFn m → e'.LocalFn m) : e.Reachable p n → e'.Reachable p n
+  | .here _ hl => .here _ (h _ hl)
+  | .there _ _ hm hl hr => .there _ _ hm (h _ hl) hr
+
+theorem Termination.localFn_or_occurs_of_reachable {p : Program} {e : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} {n : Nat} (h : e.Reachable p n) :
+    e.LocalFn n ∨ Termination.Occurs p vm fm n := by
+  induction h with grind [Termination.Occurs, Program.UsesFn]
+
+theorem Expr.exists_of_new_reachable {p p' : Program} {e : Expr} {n : Nat}
+    (hpre : p.Prefix p') (hp : ¬e.Reachable p n) (hp' : e.Reachable p' n) :
+    ∃ m, p.size ≤ m ∧ m < p'.size ∧ (e.LocalFn m ∨ p.UsesFn m) := by
+  induction hp' with
+  | here e hl =>
+    exfalso
+    exact hp (.here _ hl)
+  | there e m hm' hl hr ih =>
+    by_cases hm : m < p.size
+    · rw [hpre.fn_eq hm] at ih
+      obtain ⟨k, hk, hk', h⟩ := ih (hp <| .there _ _ hm hl ·)
+      refine ⟨k, hk, hk', ?_⟩
+      obtain h | ⟨i, hi, h⟩ := h
+      · exact Or.inr ⟨m, hm, h⟩
+      · exact Or.inr ⟨i, hi, h⟩
+    · exact ⟨m, by simpa using hm, hm', Or.inl hl⟩
+
+structure Finset : Type where
+  mem : Nat → Prop
+  bound : Nat
+  not_mem_of_ge_bound : ∀ m ≥ bound, ¬mem m
+
+instance : Membership Nat Finset := ⟨Finset.mem⟩
+
+instance : HasSubset Finset where
+  Subset s₁ s₂ := ∀ n ∈ s₁, n ∈ s₂
+
+instance : HasSSubset Finset where
+  SSubset s₁ s₂ := s₁ ⊆ s₂ ∧ ¬s₂ ⊆ s₁
+
+instance : EmptyCollection Finset := ⟨fun _ => False, 0, by simp⟩
+
+instance : Singleton Nat Finset where
+  singleton n := ⟨fun m => m = n, n + 1, by lia⟩
+
+protected def Finset.insert (s : Finset) (n : Nat) : Finset where
+  mem := fun m => m = n ∨ s.mem m
+  bound := (n + 1).max s.bound
+  not_mem_of_ge_bound := by grind [not_mem_of_ge_bound]
+
+instance : Insert Nat Finset where
+  insert n s := s.insert n
+
+protected def Finset.union (s₁ s₂ : Finset) : Finset where
+  mem := fun n => s₁.mem n ∨ s₂.mem n
+  bound := s₁.bound.max s₂.bound
+  not_mem_of_ge_bound := by grind [not_mem_of_ge_bound]
+
+instance : Union Finset := ⟨Finset.union⟩
+
+def Finset.filter (s : Finset) (p : Nat → Prop) : Finset where
+  mem := fun n => s.mem n ∧ p n
+  bound := s.bound
+  not_mem_of_ge_bound := by grind [not_mem_of_ge_bound]
+
+open Classical in
+noncomputable def Finset.size (s : Finset) : Nat := aux s.bound (Nat.le_refl _)
+  where
+    aux (i : Nat) (h : i ≤ s.bound) : Nat :=
+      match i with
+      | 0 => 0
+      | i + 1 => aux i (by lia) + if i ∈ s then 1 else 0
+
+def Finset.withBound (s : Finset) (b : Nat) (h : ∀ n ≥ b, n ∉ s) : Finset where
+  mem := s.mem
+  bound := b
+  not_mem_of_ge_bound := by simpa [Membership.mem] using h
+
+@[grind →]
+theorem Finset.notMem_of_ge_bound {s : Finset} {n : Nat} (h : s.bound ≤ n) :
+    n ∉ s := s.not_mem_of_ge_bound n h
+
+@[grind →]
+theorem Finset.mem_of_subset {s₁ s₂ : Finset} {n : Nat} (h : s₁ ⊆ s₂)
+    (hn : n ∈ s₁) : n ∈ s₂ := h _ hn
+
+@[simp, grind .]
+theorem Finset.notMem_emptyCollection {n : Nat} : n ∉ (∅ : Finset) := by
+  simp [Membership.mem, EmptyCollection.emptyCollection]
+
+@[simp, grind =]
+theorem Finset.singleton_eq_insert {n : Nat} : {n} = insert n (∅ : Finset) := by
+  simp [EmptyCollection.emptyCollection, Singleton.singleton, insert, Finset.insert]
+
+@[simp, grind =]
+theorem Finset.mem_insert_iff {s : Finset} {m n : Nat} :
+    n ∈ insert m s ↔ n = m ∨ n ∈ s := by
+  simp [Membership.mem, insert, Finset.insert]
+
+@[simp, grind =]
+theorem Finset.mem_union_iff {s₁ s₂ : Finset} {n : Nat} :
+    n ∈ s₁ ∪ s₂ ↔ n ∈ s₁ ∨ n ∈ s₂ := by
+  simp [Membership.mem, Union.union, Finset.union]
+
+@[simp, grind =]
+theorem Finset.mem_filter_iff {s : Finset} {p : Nat → Prop} {n : Nat} :
+    n ∈ s.filter p ↔ n ∈ s ∧ p n := by
+  simp [Membership.mem, Finset.filter]
+
+@[simp, grind =]
+theorem Finset.mem_withBound_iff {s : Finset} {b n : Nat} (h : ∀ m ≥ b, m ∉ s) :
+    n ∈ s.withBound b h ↔ n ∈ s := by
+  simp [Membership.mem, withBound]
+
+@[grind →]
+theorem Finset.ssubset_of_subset {s₁ s₂ : Finset} {n : Nat} (h : s₁ ⊆ s₂)
+    (h₁ : n ∉ s₁) (h₂ : n ∈ s₂) : s₁ ⊂ s₂ := ⟨h, fun h => h₁ (h _ h₂)⟩
+
+theorem Finset.size_withBound {s : Finset} {b : Nat} (h : ∀ n ≥ b, n ∉ s) :
+    (s.withBound b h).size = s.size := by
+  have h₁ : ∀ i (hi : i ≤ s.bound.min b),
+      size.aux (s.withBound b h) i (by grind [withBound]) = size.aux s i (by grind) := by
+    intro i hi
+    fun_induction size.aux s i (by grind) with grind [size.aux]
+  have h₂ : ∀ i hile (higt : s.bound.min b < i),
+      size.aux s i hile = size.aux s (s.bound.min b) (by lia) := by
+    intro i hile higt
+    fun_induction size.aux s i hile with grind
+  have h₃ : ∀ i hile (hige : s.bound.min b < i),
+      size.aux (s.withBound b h) i hile = size.aux (s.withBound b h) (s.bound.min b) (by lia) := by
+    intro i hile higt
+    fun_induction size.aux _ i hile with grind
+  grind [size]
+
+theorem Finset.size_insert {s : Finset} {n : Nat} (h : n ∉ s) :
+    (insert n s).size = s.size + 1 := by
+  let b := (n + 1).max s.bound
+  have hb : ∀ m ≥ b, m ∉ s := by grind [notMem_of_ge_bound]
+  rw [← size_withBound hb]
+  suffices ∀ i hi,
+      size.aux (insert n s) i hi =
+        size.aux (s.withBound b hb) i hi + if n < i then 1 else 0 by
+    have := this b (Nat.le_refl _)
+    simpa [show n < b by grind]
+  intro i hi
+  fun_induction size.aux (insert n s) i hi with grind [size.aux]
+
+@[grind →]
+theorem Finset.size_le_size {s₁ s₂ : Finset} (h : s₁ ⊆ s₂) :
+    s₁.size ≤ s₂.size := by
+  have hb : ∀ n ≥ s₂.bound, n ∉ s₁ := by grind [notMem_of_ge_bound]
+  rw [← size_withBound hb]
+  suffices ∀ i (hi : i ≤ s₂.bound),
+      size.aux (s₁.withBound s₂.bound hb) i hi ≤ size.aux s₂ i hi from
+    this _ _
+  intro i hi
+  fun_induction size.aux s₂ i hi with grind [size.aux]
+
+@[grind →]
+theorem Finset.size_lt_size {s₁ s₂ : Finset} (h : s₁ ⊂ s₂) :
+    s₁.size < s₂.size := by
+  obtain ⟨hsub, hex⟩ := h
+  simp only [Subset, Classical.not_forall] at hex
+  obtain ⟨n, h₂, h₁⟩ := hex
+  calc s₁.size
+    _ < (insert n s₁).size := by
+      rw [size_insert h₁]
+      exact Nat.lt_succ_self _
+    _ ≤ s₂.size := by
+      apply size_le_size
+      intro m h
+      simp only [mem_insert_iff] at h
+      obtain rfl | h := h
+      · exact h₂
+      · exact hsub _ h
+
+def Expr.localFns : Expr → Finset
+  | var _ | const _ => ∅
+  | fn m => {m}
+  | bin _ e₁ e₂ => e₁.localFns ∪ e₂.localFns
+  | cond c et ef => c.localFns ∪ et.localFns ∪ ef.localFns
+  | proj e _ => e.localFns
+
+def Program.usedFns (p : Program) : Finset :=
+  aux p.size (Nat.le_refl _)
+  where
+    aux (i : Nat) (hn : i ≤ p.size) :=
+      match i with
+      | 0 => ∅
+      | i + 1 => aux i (by lia) ∪ p.fn[i].localFns
+
+def VarMap.usedFns {n : Nat} (vm : VarMap n) : Finset :=
+  aux n (Nat.le_refl _)
+  where
+    aux (i : Nat) (hn : i ≤ n) :=
+      match i with
+      | 0 => ∅
+      | i + 1 => aux i (by lia) ∪ vm[i].localFns
+
+def FunMap.range {n : Nat} (fm : FunMap n) : Finset :=
+  aux n (Nat.le_refl _)
+  where
+    aux (i : Nat) (hn : i ≤ n) :=
+      match i with
+      | 0 => ∅
+      | i + 1 => insert fm[i] (aux i (by lia))
+
+theorem Expr.localFns_correct {e : Expr} {m : Nat} :
+    m ∈ e.localFns ↔ e.LocalFn m := by
+  fun_induction localFns with grind
+
+theorem Program.usedFns_correct {p : Program} {m : Nat} :
+    m ∈ p.usedFns ↔ p.UsesFn m := by
+  suffices ∀ i hi, m ∈ usedFns.aux p i hi ↔
+      ∃ (j : Nat) (_ : j < i), p.fn[j].LocalFn m by
+    simpa [UsesFn, usedFns] using this p.size (Nat.le_refl _)
+  intro i hi
+  fun_induction usedFns.aux with grind [Expr.localFns_correct]
+
+theorem VarMap.usedFns_correct {n : Nat} {vm : VarMap n} {m : Nat} :
+    m ∈ vm.usedFns ↔ vm.UsesFn m := by
+  suffices ∀ i hi, m ∈ usedFns.aux vm i hi ↔
+      ∃ (j : Nat) (_ : j < i), vm[j].LocalFn m by
+    simpa [UsesFn, usedFns] using this n (Nat.le_refl _)
+  intro i hi
+  fun_induction usedFns.aux with grind [Expr.localFns_correct]
+
+theorem FunMap.range_correct {n : Nat} {fm : FunMap n} {m : Nat} :
+    m ∈ fm.range ↔ fm.Contains m := by
+  suffices ∀ i hi, m ∈ range.aux fm i hi ↔
+      ∃ (j : Nat) (_ : j < i), fm[j] = m by
+    simpa [Contains, range] using this n (Nat.le_refl _)
+  intro i hi
+  fun_induction range.aux with grind
+
+namespace Termination
+
+open Classical in
+noncomputable def reachableUnmapped (p : Program) (e : Expr)
+    (fm : FunMap p.size) : Finset := aux p.size (Nat.le_refl _)
+  where
+    aux (i : Nat) (h : i ≤ p.size) : Finset :=
+      match i with
+      | 0 => ∅
+      | i + 1 =>
+        let rest := aux i (by lia)
+        if e.Reachable p i ∧ fm[i] = i then insert i rest else rest
+
+@[grind =]
+theorem reachableUnmapped_correct {p : Program} {e : Expr} {fm : FunMap p.size}
+    {m : Nat} :
+    m ∈ reachableUnmapped p e fm ↔ e.Reachable p m ∧ ∃ hm, fm[m] = m := by
+  suffices ∀ i (hi : i ≤ p.size),
+      m ∈ reachableUnmapped.aux p e fm i hi ↔ e.Reachable p m ∧ ∃ hm, fm[m] = m ∧ m < i by
+    simp_all [reachableUnmapped]
+  intro i hi
+  fun_induction reachableUnmapped.aux with grind
+
+@[grind! .]
+theorem subset_reachableUnmapped_bin_left {p : Program} {k : BinKind}
+    {e₁ e₂ : Expr} {fm : FunMap p.size} :
+    reachableUnmapped p e₁ fm ⊆ reachableUnmapped p (e₁.bin k e₂) fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_reachableUnmapped_bin_right {p : Program} {k : BinKind}
+    {e₁ e₂ : Expr} {fm : FunMap p.size} :
+    reachableUnmapped p e₂ fm ⊆ reachableUnmapped p (e₁.bin k e₂) fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_reachableUnmapped_cond_cond {p : Program} {c et ef : Expr}
+    {fm : FunMap p.size} :
+    reachableUnmapped p c fm ⊆ reachableUnmapped p (c.cond et ef) fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_reachableUnmapped_cond_true {p : Program} {c et ef : Expr}
+    {fm : FunMap p.size} :
+    reachableUnmapped p et fm ⊆ reachableUnmapped p (c.cond et ef) fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_reachableUnmapped_cond_false {p : Program} {c et ef : Expr}
+    {fm : FunMap p.size} :
+    reachableUnmapped p ef fm ⊆ reachableUnmapped p (c.cond et ef) fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_reachableUnmapped_proj {p : Program} {e : Expr} {i : Fin 2}
+    {fm : FunMap p.size} :
+    reachableUnmapped p e fm ⊆ reachableUnmapped p (e.proj i) fm := by
+  intro n hn
+  grind
+
+def invalidFns (p : Program) (e : Expr) (vm : VarMap p.size)
+    (fm : FunMap p.size) : Finset :=
+  (e.localFns ∪ p.usedFns ∪ vm.usedFns ∪ fm.range).filter (p.size ≤ ·)
+
+@[grind =]
+theorem invalidFns_correct {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} {m : Nat} :
+    m ∈ invalidFns p e vm fm ↔ (e.LocalFn m ∨ Termination.Occurs p vm fm m) ∧ p.size ≤ m := by
+  grind [Termination.Occurs, invalidFns, Expr.localFns_correct,
+    Program.usedFns_correct, VarMap.usedFns_correct, FunMap.range_correct]
+
+@[grind! .]
+theorem subset_invalidFns_bin_left {p : Program} {k : BinKind} {e₁ e₂ : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} :
+    invalidFns p e₁ vm fm ⊆ invalidFns p (e₁.bin k e₂) vm fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_invalidFns_bin_right {p : Program} {k : BinKind} {e₁ e₂ : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} :
+    invalidFns p e₂ vm fm ⊆ invalidFns p (e₁.bin k e₂) vm fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_invalidFns_cond_cond {p : Program} {c et ef : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} :
+    invalidFns p c vm fm ⊆ invalidFns p (c.cond et ef) vm fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_invalidFns_cond_true {p : Program} {c et ef : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} :
+    invalidFns p et vm fm ⊆ invalidFns p (c.cond et ef) vm fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_invalidFns_cond_false {p : Program} {c et ef : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} :
+    invalidFns p ef vm fm ⊆ invalidFns p (c.cond et ef) vm fm := by
+  intro n hn
+  grind
+
+@[grind! .]
+theorem subset_invalidFns_proj {p : Program} {e : Expr} {i : Fin 2}
+    {vm : VarMap p.size} {fm : FunMap p.size} :
+    invalidFns p e vm fm ⊆ invalidFns p (e.proj i) vm fm := by
+  intro n hn
+  grind
+
+@[grind! ⇒]
+theorem invalidFns_subset_of_occursProvenance {p p' : Program} {e : Expr}
+    {vm : VarMap p.size} {vm' : VarMap p'.size} {fm : FunMap p.size}
+    {fm' : FunMap p'.size} (hpre : p.Prefix p')
+    (h : Termination.OccursProvenance p p' vm vm' fm fm') :
+    invalidFns p' e vm' fm' ⊆ invalidFns p e vm fm := by
+  intro n hn
+  grind
+
+@[grind! ⇒]
+theorem invalidFns_ssubset_or_reachableUnmapped_subset {p p' : Program}
+    {e : Expr} {vm : VarMap p.size} {vm' : VarMap p'.size}
+    {fm : FunMap p.size} {fm' : FunMap p'.size} (hpre : p.Prefix p')
+    (hext : ∀ (m : Nat) hm, fm[m] ≠ m → fm'[m]'(by grind) = fm[m])
+    (hprov : OccursProvenance p p' vm vm' fm fm') :
+    invalidFns p' e vm' fm' ⊂ invalidFns p e vm fm ∨
+      reachableUnmapped p' e fm' ⊆ reachableUnmapped p e fm := by
+  by_cases h : reachableUnmapped p' e fm' ⊆ reachableUnmapped p e fm
+  · simp [h]
+  · obtain ⟨m, h⟩ := Classical.not_forall.mp h
+    simp only [reachableUnmapped_correct, not_imp] at h
+    obtain ⟨⟨hr', hm', hmm⟩, h⟩ := h
+    simp only [not_and, not_exists] at h
+    have hsub := invalidFns_subset_of_occursProvenance (e := e) hpre hprov
+    by_cases hr : e.Reachable p m
+    · specialize h hr
+      have hm : p.size ≤ m := by grind
+      refine Or.inl <| Finset.ssubset_of_subset (n := m) ?_ ?_ ?_
+      · exact hsub
+      · grind
+      · simp only [invalidFns_correct]
+        exact ⟨Termination.localFn_or_occurs_of_reachable hr, hm⟩
+    · obtain ⟨k, hk, hk', hl⟩ := Expr.exists_of_new_reachable hpre hr hr'
+      refine Or.inl <| Finset.ssubset_of_subset (n := k) ?_ ?_ ?_
+      · exact hsub
+      · grind
+      · obtain hl | hp := hl
+        · exact invalidFns_correct.mpr ⟨Or.inl hl, hk⟩
+        · exact invalidFns_correct.mpr ⟨Or.inr (.program hp), hk⟩
+
+end Termination
+
+@[grind]
+structure SubstProps (p p' : Program) (e e' : Expr) (vm : VarMap p.size)
+    (fm : FunMap p.size) (fm' : FunMap p'.size) : Prop where
+  pre : p.Prefix p'
+  op : Termination.OccursProvenance p p' vm vm.extend fm fm'
+  ep : Termination.ExprProvenance p p' e e' vm fm
+  ext : ∀ (m : Nat) hm, fm[m]'hm ≠ m → fm'[m]'(by grind) = fm[m]
+
+/--
+The result of a substitution.
+
+This contains the updated program and expression, the new function map, as well
+as some evidence used in the termination proof.
+-/
+structure SubstResult (p : Program) (e : Expr) (vm : VarMap p.size) (fm : FunMap p.size) : Type where
+  program : Program
+  expr : Expr
+  funMap : FunMap program.size
+  props : SubstProps p program e expr vm fm funMap
+
+open Classical Termination in
+/--
+Makes substitutions in an expression according to the given maps.
+
+The expression may include references to functions in which a substitution
+variable occurs free. For these functions, new versions need to be added to the
+program, with their bodies substituted in the same way. In addition to the new
+program and expression, this function returns a new function map to allow
+reusing the newly created functions across subexpressions.
+
+This definition is `noncomputable` as we have not defined a decision procedure
+to decide if an expression contains a free substitution variable (but there is
+no reason such a procedure could not be implemented).
+-/
+noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
+    (fm : FunMap p.size) : SubstResult p e vm fm :=
+  if ∀ n (_ : n < p.size), e.Free p n → vm[n] = var n then
+    -- The expression does not contain a free substitution variable, so there is
+    -- nothing to do.
+    ⟨p, e, fm, by rfl, by simp, by simp, by simp⟩
+  else
+    match e with
+    | var m =>
+      ⟨p, vm[m]?.getD (var m), fm, by rfl, by simp, by grind, by simp⟩
+    | fn m =>
+      if hm : m < p.size then
+        if hfmm : fm[m] = m then
+          -- There is not yet a substitution for this function, so we have to
+          -- create a new one.
+          let m' := p.size
+          let vm₁ := vm.update m
+          let fm₁ := fm.update m
+          -- Add a new function with a temporary body that is always well-typed.
+          let p₁ := p.push (recurse m') p.ty[m] p.ret[m]
+          -- Substitute the body to obtain the body for the new function.
+          let ⟨p₂, f', fm₂, h⟩ := p.fn[m].subst p₁ vm₁ fm₁
+          -- Now put the final function body in place.
+          let p₃ := p₂.setBody m' f' (hi := by grind)
+          let e' := fn m'
+          ⟨p₃, e', fm₂, by
+            refine ⟨?_, ?_, ?_, ?_⟩
+            · constructor <;> grind
+            · have hop' : OccursProvenance p p₂ vm vm₁.extend fm fm₂ := by
+                grind [Occurs, OccursProvenance, Program.UsesFn]
+              grind [Occurs, OccursProvenance, Program.UsesFn]
+            · grind [ExprProvenance]
+            · grind
+          ⟩
+        else
+          -- There is already a substitution for this function, we can reuse it.
+          ⟨p, fn fm[m], fm, by rfl, by simp, by grind, by simp⟩
+      else
+        -- This case is actually impossible, nonexistent functions don't have
+        -- free variables.
+        ⟨p, fn m, fm, by rfl, by simp, by simp, by simp⟩
+    | const c =>
+      -- This case is actually impossible, constants don't have free variables.
+      ⟨p, const c, fm, by rfl, by simp, by simp, by simp⟩
+    | bin k e₁ e₂ =>
+      let ⟨p₁, e₁', fm₁, h₁⟩ := e₁.subst p vm fm
+      let ⟨p₂, e₂', fm₂, h₂⟩ := e₂.subst p₁ vm.extend fm₁
+      ⟨p₂, e₁'.bin k e₂', fm₂, by constructor <;> grind⟩
+    | cond c et ef =>
+      let ⟨p₁, c', fm₁, h₁⟩ := c.subst p vm fm
+      let vm₁ := vm.extend
+      let ⟨p₂, et', fm₂, h₂⟩ := et.subst p₁ vm₁ fm₁
+      let ⟨p₃, ef', fm₃, h₃⟩ := ef.subst p₂ vm₁.extend fm₂
+      ⟨p₃, c'.cond et' ef', fm₃, by constructor <;> grind⟩
+    | proj e i =>
+      let ⟨p', e', fm', h⟩ := e.subst p vm fm
+      ⟨p', e'.proj i, fm', by constructor <;> grind⟩
+      termination_by (invalidFns p e vm fm |>.size, reachableUnmapped p e fm |>.size, e)
+decreasing_by
+  · have hop : OccursProvenance p p₁ vm vm₁ fm fm₁ :=
+      occursProvenance_push hm (by grind)
+    have hi : invalidFns p₁ p.fn[m] vm₁ fm₁ ⊆ invalidFns p₁ (fn m) vm₁ fm₁ := by
+      intro n h
+      grind [intro Occurs, Program.UsesFn]
+    have hr : reachableUnmapped p₁ p.fn[m] fm₁ ⊆ reachableUnmapped p₁ (fn m) fm₁ := by
+      intro n h
+      grind [Reachable.there]
+    have hm₁ : m ∉ reachableUnmapped p₁ (fn m) fm₁ := by grind
+    have hm₂ : m ∈ reachableUnmapped p (fn m) fm := by grind
+    grind
+  all_goals grind
+
+/-- Substitutes a value for a variable in a computation. -/
+noncomputable def Computation.subst (p : Computation) (n : Nat) (v : Expr) :
+    Computation :=
+  let ⟨p', e', _, _⟩ := p.expr.subst p.toProgram (.mk _ n v) (.mk _)
+  ⟨p', e'⟩
+
+theorem Program.prefix_subst {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} : p.Prefix (e.subst p vm fm).program :=
+  (e.subst p vm fm).props.pre
+
+grind_pattern Program.prefix_subst => (e.subst p vm fm).program
+
+theorem Expr.types_in_subst_of_types {p : Program} {e₁ e₂ : Expr} {t : Ty}
+    {vm : VarMap p.size} {fm : FunMap p.size} (ht : p ⊢ e₁ : t) :
+    (e₂.subst p vm fm).program ⊢ e₁ : t :=
+  (types_in_prefix_iff ht.validRefs Program.prefix_subst).mpr ht
+
+namespace VarMap
+
 theorem mk_types {p : Program} {n : Nat} {v : Expr} (hn : n < p.size)
     (h : p ⊢ v : p.ty[n]) : (mk _ n v).Types p := by
   intro m hm
@@ -347,93 +940,40 @@ theorem extend_types {p : Program} (e : Expr) {vm : VarMap p.size}
   simp only [VarMap.extend, Fin.getElem_fin, Vector.getElem_ofFn]
   split
   · apply Expr.types_in_subst_of_types
-    rw [Program.subst_ty_eq_of_lt]
+    rw [Program.prefix_subst.ty_eq ‹_›]
     apply hvm
-    assumption
   · constructor
 
 end VarMap
 
 namespace FunMap
 
-@[simp]
-theorem getElem_update_size {n : Nat} {fm : FunMap n} {m : Nat} (hm : m < n) :
-    (fm.update m hm)[n] = some n := by simp [update]
-
-@[simp]
-theorem getElem_update_eq {n : Nat} {fm : FunMap n} {m : Nat} (hm : m < n) :
-    (fm.update m hm)[m] = some n := by simp [update, *]
-
-@[simp]
-theorem getElem_update_ne {n : Nat} {fm : FunMap n} {m i : Nat} (hm : m < n)
-    (hi : i < n) (hne : m ≠ i) : (fm.update m hm)[i] = fm[i] := by simp [update, *]
-
-@[grind =]
-theorem getElem_update {n : Nat} {fm : FunMap n} {m i : Nat} (hm : m < n)
-    (hi : i ≤ n) :
-    (fm.update m hm)[i] = if _ : n = i ∨ m = i then some n else fm[i] := by
-  split
-  next h =>
-    cases h
-    · simp [← ‹n = i›]
-    · simp [*]
-  next h =>
-    replace hi : i < n := by lia
-    have : m ≠ i := by simp_all
-    simp_all
-
 theorem mk_types {p : Program} : (mk _).Types p := by
-  intro m hm n heq
-  simp [mk, *] at heq
+  intro m hm
+  simpa [mk]
 
 theorem update_types {p : Program} {fm : FunMap p.size} {b : Expr} {m : Nat}
     (hm : m < p.size) (h : fm.Types p) :
     (fm.update m hm).Types (p.push b p.ty[m] p.ret[m]) := by
-  intro i hi m' heq
-  by_cases i = p.size
-  · grind [update]
-  · replace hi : i < p.size := by lia
-    simp [*]
-    by_cases m = i
-    · grind [getElem_update_eq]
-    · simp only [ne_eq, not_false_eq_true, getElem_update_ne, *] at heq
-      obtain ⟨_, _⟩ := h i hi _ heq
-      grind
+  intro i hi
+  grind [update, Types]
 
 theorem subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hfm : fm.Types p) :
-    let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
+    let ⟨p', _, fm', _⟩ := e.subst p vm fm
     fm'.Types p' := by
   dsimp only
-  fun_induction Expr.subst <;>
-    first | grind
-          | dsimp only at *
-  next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
-    have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
-    subst p₂
-    have hfm₂ : fm₂ = (p.fn[m].subst p₁ vm₁ fm₁).funMap := by grind
-    subst fm₂
-    apply ih
-    intro i hi k hk
-    simp [p₁]
-    by_cases i = p.size
-    · subst i
-      grind
-    · simp only [p₁] at hi
-      replace hi : i < p.size := by lia
-      by_cases m = i
-      · grind [getElem_update_eq]
-      · simp only [fm₁] at hk
-        rw [getElem_update_ne _ hi ‹m ≠ i›] at hk
-        obtain ⟨_, _⟩ := hfm i hi _ hk
-        grind
+  fun_induction Expr.subst <;> try grind
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' hf ih =>
+    rw [hs₂] at ih
+    dsimp only at ih
+    exact ih <| update_types hm hfm
 
 end FunMap
 
 theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
     {fm : FunMap p.size} (ht : p ⊢ e : t) (hvm : vm.Types p) (hfm : fm.Types p) :
-    let ⟨p', e', _, _, _⟩ := e.subst p vm fm
+    let ⟨p', e', _, _⟩ := e.subst p vm fm
     p' ⊢ e' : t := by
   fun_induction subst generalizing t <;> dsimp only at *
   next => exact ht
@@ -443,18 +983,19 @@ theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
       have .var _ _ := ht
       apply hvm
     · simp [hm, ht]
-  next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' hf ih =>
+    rw [hs₂] at ih
+    dsimp only at ih
     have .fn _ _ := ht
     have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
     subst hp₂
-    have hty : p.ty[m] = p₃.ty[p.size] := by grind [Program.subst_ty_eq_of_lt]
-    have hret : p.ret[m] = p₃.ret[p.size] := by grind [Program.subst_ret_eq_of_lt]
+    have hty : p.ty[m] = p₃.ty[p.size]'(by grind) := by grind [Program.prefix_subst.ty_eq]
+    have hret : p.ret[m] = p₃.ret[p.size]'(by grind) := by grind [Program.prefix_subst.ret_eq]
     rw [hty, hret]
     constructor
-  next p vm fm m hm m' hm' h =>
+  next p vm fm m hm hfmm hf =>
     have .fn _ _ := ht
-    obtain ⟨_, hty, hret⟩ := hfm _ ‹m < p.size› m' hm'
+    obtain ⟨_, hty, hret⟩ := hfm _ ‹m < p.size›
     rw [hty, hret]
     constructor
   next => exact ht
@@ -470,7 +1011,7 @@ theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
     have .cond _ _ _ _ htc htet htef := ht
     constructor <;>
       grind [VarMap.extend_types, FunMap.subst_types]
-  next p vm fm e i p' e' fm' hsize hum hs h ih =>
+  next p vm fm e i p' e' fm' h hs hf ih =>
     rw [hs] at ih
     cases ht with
     | proj0 _ _ t' ht =>
@@ -486,8 +1027,7 @@ theorem Program.subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
   fun_induction Expr.subst <;>
     first | grind [VarMap.extend_types, FunMap.subst_types]
           | dsimp only at *
-  next p vm fm m hm f m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' hf ih =>
     have heq : p.ret[m] = (p.push (.recurse m') p.ty[m] p.ret[m]).ret[m'] := by
       simp [m']
     have ht₁ : ⊢ p₁ := by
@@ -506,7 +1046,7 @@ theorem Program.subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
       have hf' : f' = (p.fn[m].subst p₁ vm₁ fm₁).expr := by grind
       subst f'
       apply Expr.types_in_setBody_of_types
-      simp only [Vector.getElem_set_self]
+      rw [Vector.getElem_set_self hi]
       apply Expr.subst_types
       · rw [prefix_subst.ret_eq (by lia), ← heq]
         exact Expr.types_in_push_of_types (ht hm)
@@ -515,118 +1055,177 @@ theorem Program.subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
     · rw [Vector.getElem_set_ne _ _ ‹m' ≠ i›]
       exact Expr.types_in_setBody_of_types _ (ht₂ hi)
 
-structure FunMap.Extends {n' n : Nat} (fm' : FunMap n') (fm : FunMap n) : Prop where
-  le : n ≤ n'
-  eq : ∀ {m} (_ : m < n), fm[m].getD m ≠ m → fm'[m] = fm[m]
-  eq_none : ∀ {m} (_ : m < n'), fm'[m] = none → ∃ (_ : m < n), fm[m] = none
-  eq_of_lt : ∀ {m} (_ : m < n'), fm'[m].getD m < n →
-    ∃ (_ : m < n), fm'[m] = fm[m]
-
-grind_pattern FunMap.Extends.eq =>
-  fm'.Extends fm, fm[m].getD m, fm'[m].getD m
+def FunMap.Original {n : Nat} (fm : FunMap n) (m : Nat) : Prop :=
+  m < n ∧ ∀ ⦃k⦄ (_ : k < n), fm[k] = m → m = k
 
 @[grind →]
-theorem FunMap.extends_trans {n₀ n₁ n₂ : Nat} {fm₀ : FunMap n₀}
-    {fm₁ : FunMap n₁} {fm₂ : FunMap n₂} (h : fm₁.Extends fm₀)
-    (h' : fm₂.Extends fm₁) : fm₂.Extends fm₀ := by
-  obtain ⟨h₀, h₁, h₂, h₃⟩ := h
-  obtain ⟨h₀', h₁', h₂', h₃'⟩ := h'
-  constructor
-  · grind
-  · intro m hm heq₂
-    replace ⟨hm, heq₁⟩ := h₂' hm heq₂
-    exact h₂ hm heq₁
-  · grind
-  · grind
+theorem FunMap.Original.lt {n : Nat} {fm : FunMap n} {m : Nat}
+    (h : fm.Original m) : m < n := h.1
 
-theorem FunMap.extends_update {n : Nat} {fm : FunMap n} {m : Nat} (hm : m < n)
-    (h : fm[m] = none) : (fm.update m hm).Extends fm := by
-  constructor <;> grind
+@[grind →]
+theorem FunMap.Original.map {n : Nat} {fm : FunMap n} {m : Nat}
+    (hm : m < n) (h : fm.Original fm[m]) : fm[m] = m := h.2 hm rfl
 
-@[grind! .]
-theorem FunMap.extends_subst {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} : (e.subst p vm fm).funMap.Extends fm := by
-  fun_induction Expr.subst <;>
-    try solve | constructor <;> simp_all
-              | grind [extends_update]
+theorem FunMap.original_update {n : Nat} {fm : FunMap n} {m k : Nat}
+    (hm : m < n) (h : fm.Original k) : (fm.update m hm).Original k := by
+  grind [Original]
 
-def Expr.NoSubst {n : Nat} (e : Expr) (fm : FunMap n) : Prop :=
-  ∀ ⦃m r⦄ (_ : m < n), e.Local (fm[m].getD m) r → fm[m] = none
+def Expr.Original (e : Expr) {n : Nat} (fm : FunMap n) : Prop :=
+  ∀ ⦃m r⦄, e.Local m r → fm.Original m
 
-theorem Expr.noSubst_mk {n : Nat} {e : Expr} : e.NoSubst (.mk n) := by
-  grind [Expr.NoSubst]
+@[grind →]
+theorem Expr.Original.bounded {e : Expr} {n : Nat} {fm : FunMap n}
+    (h : e.Original fm) : e.Bounded n :=
+  fun _ _ hl => (h hl).1
 
 @[simp, grind =]
-theorem Expr.noSubst_bin_iff {n : Nat} {k : BinKind} {e₁ e₂ : Expr} {fm : FunMap n} :
-    (e₁.bin k e₂).NoSubst fm ↔ e₁.NoSubst fm ∧ e₂.NoSubst fm := by
+theorem Expr.original_var_iff {n m : Nat} {fm : FunMap n} :
+    (var m).Original fm ↔ fm.Original m := by
+  constructor
+  · intro h
+    exact h .var
+  · intro h k r hl
+    grind
+
+@[simp, grind =]
+theorem Expr.original_fn_iff {n m : Nat} {fm : FunMap n} :
+    (fn m).Original fm ↔ fm.Original m := by
+  constructor
+  · intro h
+    exact h .fn
+  · intro h k r hl
+    grind
+
+@[simp, grind .]
+theorem Expr.original_const {n : Nat} {c : Const} {fm : FunMap n} :
+    (const c).Original fm := nofun
+
+@[simp, grind =]
+theorem Expr.original_bin_iff {n : Nat} {k : BinKind} {e₁ e₂ : Expr}
+    {fm : FunMap n} :
+    (e₁.bin k e₂).Original fm ↔ e₁.Original fm ∧ e₂.Original fm := by
   constructor
   · intro h
     and_intros
-    · intro m r hm hl
-      exact h hm (.binL _ _ _ _ hl)
-    · intro m r hm hl
-      exact h hm (.binR _ _ _ _ hl)
-  · intro ⟨h₁, h₂⟩
-    intro m r hm hl
-    obtain hl | hl := local_bin_iff.mp hl
-    · exact h₁ hm hl
-    · exact h₂ hm hl
+    · intro m r hl; exact h (.binL _ _ _ _ hl)
+    · intro m r hl; exact h (.binR _ _ _ _ hl)
+  · intro ⟨h₁, h₂⟩ m r hl
+    cases hl with
+    | binL _ _ _ _ hl => exact h₁ hl
+    | binR _ _ _ _ hl => exact h₂ hl
 
 @[simp, grind =]
-theorem Expr.noSubst_cond_iff {n : Nat} {c et ef : Expr} {fm : FunMap n} :
-    (c.cond et ef).NoSubst fm ↔ c.NoSubst fm ∧ et.NoSubst fm ∧ ef.NoSubst fm := by
+theorem Expr.original_cond_iff {n : Nat} {c et ef : Expr} {fm : FunMap n} :
+    (c.cond et ef).Original fm ↔ c.Original fm ∧ et.Original fm ∧ ef.Original fm := by
   constructor
   · intro h
     and_intros
-    · intro m r hm hl
-      exact h hm (.condC _ _ _ _ hl)
-    · intro m r hm hl
-      exact h hm (.condT _ _ _ _ hl)
-    · intro m r hm hl
-      exact h hm (.condF _ _ _ _ hl)
-  · intro ⟨hc, het, hef⟩
-    intro m r hm hl
-    obtain hl | hl | hl := local_cond_iff.mp hl
-    · exact hc hm hl
-    · exact het hm hl
-    · exact hef hm hl
+    · intro m r hl; exact h (.condC _ _ _ _ hl)
+    · intro m r hl; exact h (.condT _ _ _ _ hl)
+    · intro m r hl; exact h (.condF _ _ _ _ hl)
+  · intro ⟨hc, het, hef⟩ m r hl
+    cases hl with
+    | condC _ _ _ _ hl => exact hc hl
+    | condT _ _ _ _ hl => exact het hl
+    | condF _ _ _ _ hl => exact hef hl
 
 @[simp, grind =]
-theorem Expr.noSubst_proj_iff {n : Nat} {e : Expr} {i : Fin 2} {fm : FunMap n} :
-    (e.proj i).NoSubst fm ↔ e.NoSubst fm := by
+theorem Expr.original_proj_iff {n : Nat} {e : Expr} {i : Fin 2}
+    {fm : FunMap n} : (e.proj i).Original fm ↔ e.Original fm := by
   constructor
-  · intro h m r hm hl
-    exact h hm (.proj _ _ _ hl)
-  · intro h m r hm hl
-    have hl := local_proj_iff.mp hl
-    exact h hm hl
+  · intro h m r hl
+    exact h (.proj _ _ _ hl)
+  · intro h m r hl
+    replace .proj _ _ _ hl := hl
+    exact h hl
 
-theorem Expr.noSubst_of_extends_of_noSubst {n n' : Nat} {e : Expr}
-    {fm : FunMap n} {fm' : FunMap n'} (he : ∀ {m r}, e.Local m r → m < n)
-    (hext : fm'.Extends fm) (h : e.NoSubst fm) :
-    e.NoSubst fm' := by
-  intro m r hm hl
-  replace ⟨hm, heq⟩ := hext.eq_of_lt hm (he hl)
-  rw [heq] at hl ⊢
-  exact h hm hl
+theorem Expr.original_mk {n : Nat} {e : Expr} (h : e.Bounded n) :
+    e.Original (.mk n) := by
+  intro m r hl
+  refine ⟨h hl, ?_⟩
+  intro k hk heq
+  simp_all [FunMap.mk]
+
+theorem Expr.original_update {n : Nat} {e : Expr} {fm : FunMap n} {m : Nat}
+    (hm : m < n) (h : e.Original fm) : e.Original (fm.update m hm) := by
+  intro k r hl
+  exact FunMap.original_update hm (h hl)
+
+def Expr.DeepOriginal (e : Expr) (p : Program) (fm : FunMap p.size) : Prop :=
+  e.Original fm ∧ ∀ m, e.Reachable p m → ∃ hm, (p.fn[m]'hm).Original fm
+
+@[grind →]
+theorem Expr.DeepOriginal.validRefs {p : Program} {e : Expr} {fm : FunMap p.size}
+    (h : e.DeepOriginal p fm) : e.ValidRefs p := h.1.bounded
+
+@[grind .]
+theorem Expr.DeepOriginal.deepValidFns {p : Program} {e : Expr}
+    {fm : FunMap p.size} (h : e.DeepOriginal p fm) : e.DeepValidFns p :=
+  fun _ hr => (h.2 _ hr).1
+
+@[grind →]
+theorem Expr.lt_of_deepOriginal_of_reachable {p : Program} {e : Expr}
+    {fm : FunMap p.size} {n : Nat} (ho : e.DeepOriginal p fm)
+    (hr : e.Reachable p n) : n < p.size :=
+  (ho.2 _ hr).1
+
+@[simp, grind =]
+theorem Expr.deepOriginal_var_iff {p : Program} {n : Nat} {fm : FunMap p.size} :
+    (var n).DeepOriginal p fm ↔ fm.Original n := by
+  constructor <;> intro h
+  · exact original_var_iff.mp h.1
+  · exact ⟨original_var_iff.mpr h, nofun⟩
+
+@[simp, grind =]
+theorem Expr.deepOriginal_fn_iff {p : Program} {n : Nat} {fm : FunMap p.size} :
+    (fn n).DeepOriginal p fm ↔ fm.Original n ∧ ∃ hn, (p.fn[n]'hn).DeepOriginal p fm := by
+  grind [DeepOriginal]
+
+@[simp, grind .]
+theorem Expr.deepOriginal_const {p : Program} {c : Const} {fm : FunMap p.size} :
+    (const c).DeepOriginal p fm :=
+  ⟨original_const, fun _ hr => (not_reachable_const hr).elim⟩
+
+@[simp, grind =]
+theorem Expr.deepOriginal_bin_iff {p : Program} {k : BinKind} {e₁ e₂ : Expr} {fm : FunMap p.size} :
+    (e₁.bin k e₂).DeepOriginal p fm ↔ e₁.DeepOriginal p fm ∧ e₂.DeepOriginal p fm := by
+  grind [DeepOriginal]
+
+@[simp, grind =]
+theorem Expr.deepOriginal_cond_iff {p : Program} {c et ef : Expr} {fm : FunMap p.size} :
+    (c.cond et ef).DeepOriginal p fm ↔
+      c.DeepOriginal p fm ∧ et.DeepOriginal p fm ∧ ef.DeepOriginal p fm := by
+  grind [DeepOriginal]
+
+@[simp, grind =]
+theorem Expr.deepOriginal_proj_iff {p : Program} {e : Expr} {i : Fin 2} {fm : FunMap p.size} :
+    (e.proj i).DeepOriginal p fm ↔ e.DeepOriginal p fm := by
+  grind [DeepOriginal]
+
+theorem Expr.deepOriginal_mk {p : Program} {e : Expr} (hp : p.ValidRefs)
+    (he : e.ValidRefs p) : e.DeepOriginal p (.mk _) := by
+  constructor
+  · exact original_mk he
+  · intro m hr
+    induction hr with
+    | here e hl =>
+      have hm := he hl
+      exact ⟨hm, original_mk (hp hm)⟩
+    | there e k hk hl hr ih => exact ih (hp hk)
 
 def FunMap.LocalProvenance {n : Nat} (fm : FunMap n) (e e' : Expr) (k : Option Nat) :
     Prop :=
-  ∀ ⦃m r⦄ (_ : m < n),
-    fm[m].getD m ≠ m → e'.Local (fm[m].getD m) r → m = k ∨ e.Local m r
+  ∀ ⦃m r⦄ (_ : m < n), fm[m] ≠ m → e'.Local fm[m] r → m = k ∨ e.Local m r
 
 structure FunMap.Valid {n : Nat} (fm : FunMap n) : Prop where
-  lt : ∀ {m} (_ : m < n), fm[m].getD m < n
+  lt : ∀ {m} (_ : m < n), fm[m] < n
   inj : ∀ {m k} (_ : m < n) (_ : k < n),
-    fm[m].getD m ≠ m → fm[k].getD k ≠ k → fm[m].getD m = fm[k].getD k → m = k
-  idem : ∀ {m} (_ : m < n),
-    (fm[fm[m].getD m]'(lt _)).getD (fm[m].getD m) = fm[m].getD m
-  eq_none : ∀ {m k} (_ : m < n) (_ : k < n),
-    fm[m] = none → m = fm[k].getD k → m = k
+    fm[m] ≠ m → fm[k] ≠ k → fm[m] = fm[k] → m = k
+  idem : ∀ {m} (_ : m < n), (fm[fm[m]]'(lt _)) = fm[m]
 
 grind_pattern FunMap.Valid.lt =>
-  fm.Valid, m < n, fm[m].getD m
-  where m =/= Option.getD _ _
+  fm.Valid, m < n, fm[m]
+  where m =/= fm[_]'_
 
 attribute [grind =] FunMap.Valid.idem
 
@@ -634,7 +1233,7 @@ theorem FunMap.valid_mk {n : Nat} : (mk n).Valid := by
   constructor <;> grind
 
 theorem FunMap.valid_update {n : Nat} {fm : FunMap n} {i : Nat}
-    (hi : i < n) (hfm : fm[i] = none) (h : fm.Valid) :
+    (hi : i < n) (hfm : fm.Original i) (h : fm.Valid) :
     (fm.update i hi).Valid := by
   constructor
   case lt =>
@@ -654,55 +1253,141 @@ theorem FunMap.valid_update {n : Nat} {fm : FunMap n} {i : Nat}
     by_cases m = n
     · simp [*]
     · replace hm : m < n := by lia
-      have := h.eq_none hi hm hfm
-      grind
-  case eq_none =>
-    intro m k hm hk heq
-    replace hm : m < n := by grind
-    have him : i ≠ m := by grind
-    simp only [ne_eq, not_false_eq_true, FunMap.getElem_update_ne, hm, him] at heq
-    by_cases k = n
-    · grind
-    · replace hk : k < n := by lia
-      have := h.eq_none hm hk heq
+      have := hfm.2 hm
       grind
 
-theorem FunMap.valid_subst {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} (h : fm.Valid) : (e.subst p vm fm).funMap.Valid := by
-  fun_induction Expr.subst <;> try simpa using h
-  next p vm fm m hm hfm m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum hf ih =>
+structure FunMap.Extends {n' n : Nat} (fm' : FunMap n') (fm : FunMap n) : Prop where
+  valid : fm'.Valid
+  le : n ≤ n'
+  eq : ∀ {m} (_ : m < n), fm[m] ≠ m → fm'[m] = fm[m]
+  eq_of_lt : ∀ {m} (_ : m < n'), fm'[m] < n → ∃ (_ : m < n), fm'[m] = fm[m]
+  exists_of_ge : ∀ {m'}, n ≤ m' → m' < n' → ∃ (m : Nat) (_ : m < n), fm'[m] = m'
+
+grind_pattern FunMap.Extends.eq =>
+  fm'.Extends fm, fm[m], fm'[m]
+
+theorem FunMap.extends_self {n : Nat} {fm : FunMap n} (hfm : fm.Valid) :
+    fm.Extends fm := by constructor <;> grind
+
+@[grind →]
+theorem FunMap.extends_trans {n₀ n₁ n₂ : Nat} {fm₀ : FunMap n₀}
+    {fm₁ : FunMap n₁} {fm₂ : FunMap n₂} (h : fm₁.Extends fm₀)
+    (h' : fm₂.Extends fm₁) : fm₂.Extends fm₀ := by
+  obtain ⟨hfm₁, hle, h₀, h₁, h₂⟩ := h
+  obtain ⟨hfm₂, hle', h₀', h₁', h₂'⟩ := h'
+  constructor
+  · exact hfm₂
+  · grind
+  · intro m hm hm'
+    replace ⟨hm, heq'⟩ := h₁' hm (by lia)
+    replace ⟨hm, heq⟩ := h₁ hm (heq' ▸ hm')
+    exact ⟨hm, heq ▸ heq'⟩
+  · intro m' hge hlt
+    by_cases h : m' < n₁
+    · obtain ⟨m, hm, hfmm⟩ := h₂ hge h
+      exact ⟨m, hm, by grind⟩
+    · simp only [Nat.not_lt] at h
+      obtain ⟨m, hm, hfmm⟩ := h₂' h hlt
+      by_cases h : m < n₀
+      · exact ⟨m, h, hfmm⟩
+      · simp only [Nat.not_lt] at h
+        obtain ⟨k, hk, hfmk⟩ := h₂ h hm
+        have heq := h₀' (show k < n₁ by lia) (by grind)
+        have := hfm₂.idem (show k < n₂ by lia)
+        simp [heq, hfmk] at this
+        grind
+  · grind
+
+theorem FunMap.extends_update {n : Nat} {fm : FunMap n} {m : Nat} (hm : m < n)
+    (hfm : fm.Valid) (h : fm.Original m) (hfmm : fm[m] = m) :
+    (fm.update m hm).Extends fm := by
+  constructor <;> grind [valid_update]
+
+grind_pattern FunMap.extends_update => fm.Original m, fm.update m hm
+
+theorem FunMap.original_of_extends {n n' : Nat} {fm : FunMap n} {fm' : FunMap n'}
+    {m : Nat} (h : fm'.Extends fm) (ho : fm.Original m) : fm'.Original m := by
+  obtain ⟨hm, ho⟩ := ho
+  refine ⟨Nat.lt_of_lt_of_le hm h.le, ?_⟩
+  intro k hk hfmk
+  grind [h.eq_of_lt hk (hfmk ▸ hm)]
+
+theorem Expr.original_of_extends {n n' : Nat} {e : Expr} {fm : FunMap n}
+    {fm' : FunMap n'} (h : fm'.Extends fm) (ho : e.Original fm) :
+    e.Original fm' := by
+  intro m r hl
+  exact FunMap.original_of_extends h (ho hl)
+
+@[grind ⇐]
+theorem Expr.deepOriginal_of_extends {p p' : Program} {e : Expr} {fm : FunMap p.size}
+    {fm' : FunMap p'.size} (hpre : p.Prefix p') (hext : fm'.Extends fm)
+    (ho : e.DeepOriginal p fm) : e.DeepOriginal p' fm' := by
+  have ⟨ho, hor⟩ := ho
+  refine ⟨Expr.original_of_extends hext ho, ?_⟩
+  intro m hr
+  grind [Expr.original_of_extends]
+
+@[grind! .]
+theorem FunMap.extends_subst {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} (hfm : fm.Valid) (ho : e.DeepOriginal p fm) :
+    (e.subst p vm fm).funMap.Extends fm := by
+  fun_induction Expr.subst <;>
+    try solve_by_elim [extends_self]
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
     rw [hs₂] at ih
-    exact ih (valid_update hm hfm h)
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ hsize₁ hum₁ hs₁ p₂ e₂' fm₂ hsize₂ hum₂ hs₂
-      h ih₁ ih₂ =>
+    dsimp only at ih ⊢
+    have hext := extends_update hm hfm (by grind) hfmm
+    obtain ⟨hom, hm, ho⟩ := Expr.deepOriginal_fn_iff.mp ho
+    apply extends_trans
+    · exact hext
+    · apply ih
+      · exact valid_update hm hom hfm
+      · exact Expr.deepOriginal_of_extends Program.prefix_push hext ho
+  next p vm fm k e₁ e₂ p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ h ih₁ ih₂ =>
     rw [hs₁] at ih₁
     rw [hs₂] at ih₂
-    exact ih₂ (ih₁ h)
-  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
-      p₃ ef' fm₃ hsize₃ hum₃ hs₃ hf ihc ihet ihef =>
+    dsimp only at ih₁ ih₂ ⊢
+    obtain ⟨ho₁, ho₂⟩ := Expr.deepOriginal_bin_iff.mp ho
+    have hext₁ := ih₁ hfm ho₁
+    have hext₂ := ih₂ hext₁.valid (Expr.deepOriginal_of_extends h₁.pre hext₁ ho₂)
+    exact extends_trans hext₁ hext₂
+  next p vm fm c et ef p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃ hs₃
+      hf ihc ihet ihef =>
     rw [hs₁] at ihc
     rw [hs₂] at ihet
     rw [hs₃] at ihef
-    exact ihef (ihet (ihc h))
-  next p vm fm e i p' e' fm' hsize hum hs hf ih =>
+    dsimp only at ihc ihet ihef ⊢
+    obtain ⟨hoc, hoet, hoef⟩ := Expr.deepOriginal_cond_iff.mp ho
+    have hpre₂ := Program.prefix_trans h₁.pre h₂.pre
+    have hext₁ := ihc hfm hoc
+    have hext₂ := extends_trans hext₁ <|
+      ihet hext₁.valid (Expr.deepOriginal_of_extends h₁.pre hext₁ hoet)
+    exact extends_trans hext₂ <|
+      ihef hext₂.valid (Expr.deepOriginal_of_extends hpre₂ hext₂ hoef)
+  next p vm fm e i p' e' fm' h hs hf ih =>
     rw [hs] at ih
-    exact ih h
+    dsimp at ih ⊢
+    exact ih hfm (Expr.deepOriginal_proj_iff.mp ho)
+
+theorem FunMap.valid_subst {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} (h : fm.Valid) (ho : e.DeepOriginal p fm) :
+    (e.subst p vm fm).funMap.Valid :=
+  (extends_subst h ho).valid
 
 grind_pattern FunMap.valid_subst => (e.subst p vm fm).funMap
 
 structure VarMap.Valid {n : Nat} (vm : VarMap n) (fm : FunMap n) : Prop where
   bounded : ∀ {m} (_ : m < n), vm[m].Bounded n
   localProvenance : ∀ {m} (_ : m < n),
-    fm[m].getD m ≠ m → fm.LocalProvenance (.var m) vm[m] none
-  noSubst : ∀ {m} (_ : m < n),
-    fm[m].getD m = m → vm[m] ≠ .var m → vm[m].NoSubst fm
+    fm[m] ≠ m → fm.LocalProvenance (.var m) vm[m] none
+  original : ∀ {m} (_ : m < n),
+    fm[m] = m → vm[m] ≠ .var m → vm[m].Original fm
 
 attribute [grind! .] VarMap.Valid.bounded
 
 theorem VarMap.valid_mk {n m : Nat} {v : Expr} (hv : v.Bounded n) :
     (mk n m v).Valid (.mk n) := by
-  constructor <;> grind [Expr.NoSubst]
+  constructor <;> grind [Expr.original_mk]
 
 theorem VarMap.valid_update {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {i : Nat} (hi : i < p.size) (hvm : vm.Valid fm)
@@ -731,157 +1416,114 @@ theorem VarMap.valid_update {p : Program} {vm : VarMap p.size}
     · grind
     · have : i ≠ n := by grind
       apply hvm.localProvenance <;> simp_all
-  case noSubst =>
+  case original =>
     intro m hm hmm' hne
-    have : i ≠ m := by grind
-    have : m ≠ p.size := by
-      intro rfl
-      simp at hne
-    replace hm : m < p.size := by lia
-    simp only [ne_eq, not_false_eq_true, VarMap.getElem_update_ne, *]
-    intro n r hn hl
-    by_cases n = p.size
-    · grind
-    · have : i ≠ n := by grind
-      replace hn : n < p.size := by lia
-      simp only [ne_eq, not_false_eq_true, FunMap.getElem_update_ne, *] at hl ⊢
-      refine hvm.noSubst hm ?_ ?_ hn hl <;> simp_all
+    grind [Expr.original_update, hvm.original]
 
 theorem VarMap.valid_subst {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) :
+    {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid)
+    (ho : e.DeepOriginal p fm) :
     vm.extend.Valid (e.subst p vm fm).funMap := by
-  fun_induction Expr.subst <;> try simpa [extend_eq]
-  next p vm fm m hm heq m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
+  fun_induction Expr.subst <;> try grind
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' h ih =>
     rw [hs₂] at ih
     dsimp only at ih
+    obtain ⟨hom, hm, ho⟩ := Expr.deepOriginal_fn_iff.mp ho
     have hvm₁ : vm₁.Valid fm₁ := valid_update hm hvm hfm
-    have hfm₁ : fm₁.Valid := FunMap.valid_update hm heq hfm
-    have hvm₂ : vm₁.extend.Valid fm₂ := ih hvm₁ hfm₁
+    have hfm₁ : fm₁.Valid := FunMap.valid_update hm hom hfm
+    have hext₁ := FunMap.extends_update hm hfm hom hfmm
+    replace ho : p.fn[m].DeepOriginal p₁ fm₁ :=
+      Expr.deepOriginal_of_extends Program.prefix_push hext₁ ho
+    have hvm₂ : vm₁.extend.Valid fm₂ :=
+      ih hvm₁ hfm₁ ho
     have hfm₂ : fm₂.Valid := by grind
-    have hext₁ := FunMap.extends_update hm heq
     have hext₂ : fm₂.Extends fm₁ := by grind
     have hext := FunMap.extends_trans hext₁ hext₂
     constructor
-    case bounded =>
-      intro k hk
-      by_cases hk : k < p.size
-      · simp [*]
-        exact Expr.bounded_of_ge (by lia) (hvm.bounded hk)
-      · simp_all
+    case bounded => grind
     case localProvenance =>
       intro k hk hkk' l r hl hll' hlc
       by_cases k < p.size
       · simp only [VarMap.getElem_extend_lt, *] at hlc
         by_cases m = k
         · subst k
-          have hl' : fm₂[l].getD l < p.size := hvm.bounded hm hlc
+          have hl' : fm₂[l] < p.size := hvm.bounded hm hlc
           obtain ⟨hl, heq⟩ := hext.eq_of_lt hl hl'
           rw [heq] at hlc
           by_cases hvmm : vm[m] = .var m
           · grind
-          · have := hvm.noSubst hm (by simp [*]) hvmm hl hlc
-            grind
+          · grind [hvm.original hm (by simp [*]) hvmm hlc]
         · exact hvm₂.localProvenance hk hkk' hl hll' (by grind)
       · exact hvm₂.localProvenance hk hkk' hl hll' (by grind)
-    case noSubst =>
+    case original =>
       intro k hk hkk' hne
+      dsimp only at hk hkk'
       by_cases hk : k < p.size
-      · have hkk' : fm[k].getD k = k := by grind
-        simp only [VarMap.getElem_extend_lt, *] at hne ⊢
-        intro l r hl hlc
-        by_cases hll'₂ : fm₂[l] = none
-        · exact hll'₂
-        · have hl' : fm₂[l].getD l < p.size := hvm.bounded hk hlc
-          obtain ⟨hl, heq⟩ := hext.eq_of_lt hl hl'
-          rw [heq] at hlc
-          have := hvm.noSubst hk hkk' hne hl hlc
-          grind
+      · have hkk' : fm[k] = k := by grind
+        simp only [getElem_extend_lt, *] at hne ⊢
+        exact Expr.original_of_extends hext (hvm.original hk hkk' hne)
       · simp_all
-  next => grind
-  next => grind
-  next => grind
 
 grind_pattern VarMap.valid_subst =>
   vm.extend (n' := (e.subst p vm fm).program.size)
 
 theorem Expr.validRefs_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid)
-    (he : e.ValidRefs p) :
-    let ⟨p', e', _, _, _⟩ := e.subst p vm fm
+    (he : e.DeepOriginal p fm) :
+    let ⟨p', e', _, _⟩ := e.subst p vm fm
     e'.ValidRefs p' := by
-  fun_induction subst
-  next => simp [*]
-  next => simp_all [hvm.bounded]
-  next => grind
-  next p vm fm m hm m' hfm h =>
-    have hfmm : fm[m].getD m = m' := by simp [*]
-    grind
-  next => grind
-  next => simp
-  next => grind [noSubst_of_extends_of_noSubst]
-  next => grind [noSubst_of_extends_of_noSubst]
-  next => grind [noSubst_of_extends_of_noSubst]
+  fun_induction subst with grind
 
 theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid)
-    (he : e.ValidRefs p) (hns : e.NoSubst fm) :
-    let ⟨_, e', fm', _, _⟩ := e.subst p vm fm
+    (ho : e.DeepOriginal p fm) :
+    let ⟨_, e', fm', _⟩ := e.subst p vm fm
     fm'.LocalProvenance e e' none := by
   fun_induction Expr.subst
   next p e vm fm h =>
     intro n r hn hnn' hl
-    simpa [hns hn hl] using hl
+    have := (ho.1 hl).map
+    contradiction
   next p vm fm m h =>
     intro n r hn hnn' hl
-    simp only [Expr.bounded_var_iff] at he
-    simp only [he, getElem?_pos, Option.getD_some] at hl
-    by_cases hmm' : fm[m].getD m = m
+    have hm : m < p.size := by grind
+    simp only [hm, getElem?_pos, Option.getD_some] at hl
+    by_cases hmm' : fm[m] = m
     · simp only [Classical.not_forall] at h
       obtain ⟨k, hk, hf, hne⟩ := h
       have .var := hf
-      have := hvm.noSubst he hmm' hne hn hl
+      have := hvm.original hm hmm' hne hl
       grind
-    · exact hvm.localProvenance he hmm' hn hnn' hl
-  next p vm fm m hm heq m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
+    · exact hvm.localProvenance hm hmm' hn hnn' hl
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
     rw [hs₂] at ih
-    dsimp only at ih
-    have hfm₁ : fm₁.Valid := FunMap.valid_update hm heq hfm
-    have hfm₂ : fm₂.Valid := by grind
+    dsimp only at ih ⊢
+    have hext₁ : fm₁.Extends fm := by grind
+    have hfm₁ : fm₁.Valid := FunMap.valid_update hm (by grind) hfm
     have hext₂ : fm₂.Extends fm₁ := by grind
+    have hfm₂ : fm₂.Valid := hext₂.valid
     intro n r hn hnn' hl
-    subst f''
-    simp only [Expr.local_fn_iff] at hl
+    subst e'
+    simp only [local_fn_iff] at hl
     obtain ⟨hr, hmn'⟩ := hl
-    have : fm₂[m].getD m = m' := by
-      rw [hext₂.eq (by lia) (by grind)]
-      simp [fm₁, m']
+    have : fm₂[m]'(by grind) = m' := by grind
     rw [← this] at hmn'
-    have : m = n := hfm₂.inj (by lia) hn (by grind) hnn' hmn'
+    have : m = n := hfm₂.inj (by grind) hn (by grind) hnn' hmn'
     simp [*]
-  next p vm fm m hm m' hfm h =>
-    have hfmm : fm[m].getD m = m' := by simp [*]
+  next p vm fm m hm hfmm hf =>
     intro n r hn hnn' hl
-    have hm' := hfm.lt hm
-    by_cases hmm' : m = m'
-    · have := hns hn (hmm' ▸ hl)
-      grind
-    · grind [hfm.inj]
+    grind [hfm.inj]
   next => grind
   next p vm fm b h => simp [FunMap.LocalProvenance]
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ hsize₁ hum₁ hs₁ p₂ e₂' fm₂ hsize₂ hum₂ hs₂
-      h ih₁ ih₂ =>
+  next p vm fm k e₁ e₂ p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ h ih₁ ih₂ =>
     rw [hs₁] at ih₁
     rw [hs₂] at ih₂
     dsimp only at *
     have hvm₁ : vm.extend.Valid fm₁ := by grind
     have hfm₁ : fm₁.Valid := by grind
-    obtain ⟨hv₁, hv₂⟩ := Expr.bounded_bin_iff.mp he
-    obtain ⟨hns₁, hns₂⟩ := Expr.noSubst_bin_iff.mp hns
-    have hf' := ih₁ hvm hfm hv₁ hns₁
-    have he' := ih₂ hvm₁ hfm₁ (bounded_of_ge hsize₁ hv₂)
-      (noSubst_of_extends_of_noSubst (by grind) (by grind) hns₂)
+    obtain ⟨ho₁, ho₂⟩ := Expr.deepOriginal_bin_iff.mp ho
+    have hf' := ih₁ hvm hfm ho₁
+    have he' := ih₂ hvm₁ hfm₁ (deepOriginal_of_extends (by grind) (by grind) ho₂)
     intro n r hn hnn' hl
     have hext₁ : fm₂.Extends fm₁ := by grind
     have hv₁' : e₁'.ValidRefs p₁ := by grind [validRefs_subst]
@@ -892,29 +1534,28 @@ theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
       grind
     · have := he' hn hnn' hl
       grind
-  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
-      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
+  next p vm fm c et ef p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃ hs₃
+      hf ihc ihet ihef =>
     rw [hs₁] at ihc
     rw [hs₂] at ihet
     rw [hs₃] at ihef
-    dsimp only at *
+    dsimp only at ihc ihet ihef ⊢
     have hvm₁ : vm₁.Valid fm₁ := by grind
     have hfm₁ : fm₁.Valid := by grind
     have hvm₂ : vm₁.extend.Valid fm₂ := by grind
     have hfm₂ : fm₂.Valid := by grind
-    obtain ⟨hvc, hvet, hvef⟩ := Expr.bounded_cond_iff.mp he
-    obtain ⟨hnsc, hnset, hnsef⟩ := Expr.noSubst_cond_iff.mp hns
-    have hc' := ihc hvm hfm hvc hnsc
-    have het' := ihet hvm₁ hfm₁ (bounded_of_ge hsize₁ hvet)
-      (noSubst_of_extends_of_noSubst (by grind) (by grind) hnset)
-    have hef' := ihef hvm₂ hfm₂ (bounded_of_ge (by lia) hvef)
-      (noSubst_of_extends_of_noSubst (by grind) (by grind) hnsef)
+    obtain ⟨hoc, hoet, hoef⟩ := Expr.deepOriginal_cond_iff.mp ho
+    have hc' := ihc hvm hfm hoc
+    have het' := ihet hvm₁ hfm₁
+      (deepOriginal_of_extends (by grind) (by grind) hoet)
+    have hef' := ihef hvm₂ hfm₂
+      (deepOriginal_of_extends (by grind) (by grind) hoef)
     intro n r hn hnn' hl
     have hext₁ : fm₃.Extends fm₁ := by grind
     have hext₂ : fm₃.Extends fm₂ := by grind
     have hvc' : c'.ValidRefs p₁ := by grind [validRefs_subst]
     have hvet' : et'.ValidRefs p₂ := by
-      grind [validRefs_subst, noSubst_of_extends_of_noSubst]
+      grind [validRefs_subst]
     obtain hl | hl | hl := Expr.local_cond_iff.mp hl
     · replace ⟨hn, heq⟩ := hext₁.eq_of_lt hn (hvc' hl)
       rw [heq] at hl
@@ -926,46 +1567,42 @@ theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
       grind
     · have := hef' hn hnn' hl
       grind
-  next p vm fm e i p' e' fm' hsize hum hs hf ih =>
+  next p vm fm e i p' e' fm' h hs hf ih =>
     rw [hs] at ih
-    dsimp only at *
+    dsimp only at ih ⊢
     intro n r hn hnn' hl
     rw [Expr.local_proj_iff] at hl ⊢
     apply ih hvm hfm <;> grind
 
 theorem Program.validRefs_subst {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid)
-    (hp : p.ValidRefs) : (e.subst p vm fm).program.ValidRefs := by
+    {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
+    (ho : e.DeepOriginal p fm) : (e.subst p vm fm).program.ValidRefs := by
   fun_induction Expr.subst <;> try simpa using hp
-  next p vm fm m hm heq m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
     rw [hs₂] at ih
-    dsimp only at ih
+    dsimp only at ih ⊢
     have hvm₁ : vm₁.Valid fm₁ := VarMap.valid_update hm hvm hfm
-    have hfm₁ : fm₁.Valid := FunMap.valid_update hm heq hfm
-    have hp₂ := ih hvm₁ hfm₁ (validRefs_push hp (by grind))
-    have hf' : f'.ValidRefs p₂ := by
-      have : p.fn[m].ValidRefs p₁ := Expr.validRefs_in_push (hp hm)
-      grind [Expr.validRefs_subst]
-    exact validRefs_setBody hsize₂ hp₂ hf'
+    have hfm₁ : fm₁.Valid := FunMap.valid_update hm (by grind) hfm
+    have hp₂ := ih hvm₁ hfm₁ (validRefs_push hp (by grind)) (by grind)
+    have hf' : f'.ValidRefs p₂ := by grind [Expr.validRefs_subst]
+    exact validRefs_setBody (by grind) hp₂ hf'
   next => grind
   next => grind
   next => grind
 
 structure Program.ValidSubst (p : Program) (vm : VarMap p.size) (fm : FunMap p.size) where
   fn_localProvenance : ∀ {m m'} (_ : m < p.size) (_ : m' < p.size),
-    m' = fm[m].getD m → m' ≠ m → fm.LocalProvenance p.fn[m] p.fn[m'] m
-  fn_noSubst : ∀ {m} (_ : m < p.size), fm[m] = none → p.fn[m].NoSubst fm
+    m' = fm[m] → m' ≠ m → fm.LocalProvenance p.fn[m] p.fn[m'] m
   eq_of_not_nests : ∀ {m} (_ : m < p.size),
-    (∀ n (_ : n < p.size), vm[n] ≠ .var n → n ⊁[p] m) → fm[m].getD m = m
+    (∀ n (_ : n < p.size), vm[n] ≠ .var n → n ⊁[p] m) → fm[m] = m
   new_subst_var : ∀ {n m} (_ : n < p.size) (_ : m < p.size),
-    vm[n] ≠ .var n → n ≻[p] m → fm[m].getD m = m → vm[m] = .var m
-  compat : ∀ {m} (_ : m < p.size),
-    fm[m].getD m ≠ m → vm[m] = .var m ∨ vm[m] = .var (fm[m].getD m)
+    vm[n] ≠ .var n → n ≻[p] m → fm[m] = m → vm[m] = .var m
+  compat : ∀ {m} (_ : m < p.size), -- TODO Move to VarMap instead of localProvenance?
+    fm[m] ≠ m → vm[m] = .var m ∨ vm[m] = .var fm[m]
 
 theorem Program.validSubst_mk {p : Program} {n : Nat} {v : Expr} (hwf : p.WF) :
     p.ValidSubst (.mk _ n v) (.mk _) := by
-  constructor <;> grind [Expr.NoSubst, WF]
+  constructor <;> grind [WF]
 
 theorem Program.validSubst_push_recurse {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {l i : Nat} (hl : l < p.size) (hi : i < p.size)
@@ -995,23 +1632,6 @@ theorem Program.validSubst_push_recurse {p : Program} {vm : VarMap p.size}
         him, hn, hin, hfmm, hm'] at hmm' hnn' hl
       have := hvalid.fn_localProvenance hm hm' rfl hmm' hn hnn' hl
       simp_all
-  case fn_noSubst =>
-    intro m hm heq n r hn hl
-    have : m ≠ p.size := by
-      intro rfl
-      simp at heq
-    replace hm : m < p.size := by lia
-    have : i ≠ m := by
-      intro rfl
-      simp at heq
-    simp only [Vector.getElem_push_lt, hm] at hl
-    simp only [ne_eq, not_false_eq_true, FunMap.getElem_update_ne, hm, this] at heq
-    by_cases n = p.size
-    · grind
-    · replace hn : n < p.size := by lia
-      have hin : i ≠ n := by grind
-      simp only [ne_eq, not_false_eq_true, FunMap.getElem_update_ne, *] at hl ⊢
-      exact hvalid.fn_noSubst hm heq hn hl
   case eq_of_not_nests =>
     intro m hm h
     by_cases m = p.size
@@ -1030,7 +1650,7 @@ theorem Program.validSubst_push_recurse {p : Program} {vm : VarMap p.size}
     · simp [*]
     · replace hm : m < p.size := by lia
       by_cases i = m
-      · simp only [FunMap.getElem_update_eq, Option.getD_some, *] at hfmm
+      · simp only [FunMap.getElem_update_eq, *] at hfmm
         lia
       · simp only [ne_eq, not_false_eq_true, FunMap.getElem_update_ne,
           VarMap.getElem_update_ne, *] at hfmm ⊢
@@ -1055,33 +1675,31 @@ theorem Program.validSubst_push_recurse {p : Program} {vm : VarMap p.size}
 
 theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
-    (hvalid : p.ValidSubst vm fm) :
-    let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
+    (hvalid : p.ValidSubst vm fm) (ho : e.DeepOriginal p fm) :
+    let ⟨p', _, fm', _⟩ := e.subst p vm fm
     p'.ValidSubst vm.extend fm' := by
   fun_induction Expr.subst <;> try simpa using hvalid
-  next p vm fm m hm heq m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
     rw [hs₂] at ih
     dsimp only at ih
-    simp only [Classical.not_forall] at h
-    obtain ⟨l, hl, hf, hvml⟩ := h
+    simp only [Classical.not_forall] at hf
+    obtain ⟨l, hl, hf, hvml⟩ := hf
     have hnestsm : l ≻[p] m := by
       replace .fn _ hm hne hf := hf
       exact .free _ _ hl hm hne hf
+    have hext₁ : fm₁.Extends fm := FunMap.extends_update hm hfm (by grind) hfmm
     have hvm₁ : vm₁.Valid fm₁ := VarMap.valid_update hm hvm hfm
-    have hfm₁ : fm₁.Valid := FunMap.valid_update hm heq hfm
+    have hfm₁ : fm₁.Valid := hext₁.valid
+    have hext₂ : fm₂.Extends fm₁ := by grind
     have hvm₂ : vm₁.extend.Valid fm₂ := by grind [VarMap.valid_subst]
     have hfm₂ : fm₂.Valid := by grind
     have hvalid₂ := ih hvm₁ hfm₁ (validRefs_push hp (by grind))
-      (validSubst_push_recurse hl hm hfm hp hvml hnestsm hvalid)
+      (validSubst_push_recurse hl hm hfm hp hvml hnestsm hvalid) (by grind)
     have hvmm : vm[m] = .var m :=
-      hvalid.new_subst_var hl hm hvml hnestsm (by simp [heq])
-    have hprov : fm₂.LocalProvenance p.fn[m] f' none := by
-      grind [Expr.localProvenance_subst, Expr.noSubst_of_extends_of_noSubst,
-        FunMap.extends_update, hvalid.fn_noSubst]
-    have hext₁ := FunMap.extends_update hm heq
-    have hext₂ : fm₂.Extends fm₁ := by grind
+      hvalid.new_subst_var hl hm hvml hnestsm (by simp [hfmm])
     have hext := FunMap.extends_trans hext₁ hext₂
+    have hprov : fm₂.LocalProvenance p.fn[m] f' none := by
+      grind [Expr.localProvenance_subst, ⇐ Expr.bounded_of_ge]
     have hp₃ : p₃ = ((Expr.fn m).subst p vm fm).program := by
       grind [Expr.subst]
     have hpre : p.Prefix p₃ := hp₃ ▸ prefix_subst
@@ -1089,7 +1707,7 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     case fn_localProvenance =>
       intro n n' hn hn' hfmn hnn' k r hk hkk' hl
       subst n'
-      have hfmm : fm₂[m].getD m = m' := by grind [hext₂.eq]
+      have hfmm : fm₂[m]'(by grind) = m' := by grind [hext₂.eq]
       by_cases hnm : m = n
       · subst n
         simp only [Vector.getElem_set_self, p₃, hfmm] at hl
@@ -1099,10 +1717,10 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
         have heq : p₂.fn[m] = p.fn[m] := by
           have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
           subst p₂
-          rw [subst_fn_eq_of_lt (by lia)]
+          rw [prefix_subst.fn_eq (by lia)]
           simp [p₁, hm]
         simp [p₃, *]
-      · have hnm' : fm₂[n].getD n ≠ m' := by
+      · have hnm' : fm₂[n] ≠ m' := by
           intro heq
           rw [← heq] at hfmm
           have := hfm₂.inj (by lia) hn (by lia) (by grind) hfmm
@@ -1110,44 +1728,26 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
         simp only [ne_eq, not_false_eq_true, Ne.symm, Vector.getElem_set_ne, p₃, hnm'] at hl
         have hne : m' ≠ n := by grind
         cases hvalid₂.fn_localProvenance hn hn' rfl hnn' hk hkk' hl <;> simp [p₃, *]
-    case fn_noSubst =>
-      intro n hn hfm' k r hk hl
-      replace ⟨hn, hfm'⟩ := hext.eq_none hn hfm'
-      have hnm' : m' ≠ n := by grind
-      have heq : p₃.fn[n] = p.fn[n] := by
-        simp only [ne_eq, not_false_eq_true, Vector.getElem_set_ne, p₃, hnm']
-        have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
-        subst p₂
-        rw [subst_fn_eq_of_lt (by lia)]
-        simp [p₁, *]
-      rw [heq] at hl
-      have hk' := hp hn hl
-      obtain ⟨hk, heq⟩ := hext.eq_of_lt hk hk'
-      rw [heq] at hl ⊢
-      exact hvalid.fn_noSubst hn hfm' hk hl
     case eq_of_not_nests =>
-      have hnestsm₃ : l ≻[p₃] m := by
-        rw [show p₃ = ((Expr.fn m).subst p vm fm).program by grind [Expr.subst]]
-        exact (nests_in_prefix_iff hm hp prefix_subst).mpr hnestsm
+      have hnestsm₃ : l ≻[p₃] m := by grind
       intro n hn h
       by_cases m = n
       · subst n
         exfalso
-        exact h l (by lia) (by simpa [hl] using hvml) hnestsm₃
+        exact h l (by grind) (by simpa [hl] using hvml) hnestsm₃
       · apply hvalid₂.eq_of_not_nests
         intro k hk hne hnests
-        have hrec : ∀ l r, p₂.fn[m'].Local l r → l = m' := by
-          intro l r hl
-          rw [show p₂.fn[m'] = p₁.fn[m'] by grind] at hl
-          simp [p₁, m'] at hl
+        have hb : p₂.fn[m']'(by grind) = Expr.recurse m' := by -- TODO Remove?
+          have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
+          subst p₂
+          rw [prefix_subst.fn_eq (by lia)]
           grind
-        replace hnests : k ≻[p₃] n := nests_in_setBody hsize₂ hrec hnests
+        replace hnests : k ≻[p₃] n := nests_in_setBody (by grind) (by grind) hnests
         grind
     case new_subst_var =>
       intro n k hn hk hvmn hnests hfmk
-      have hext : fm₂.Extends fm := by grind [FunMap.extends_update]
       by_cases hk : k < p.size
-      · replace hfmk : fm[k].getD k = k := by grind
+      · replace hfmk : fm[k] = k := by grind
         replace hnests : n ≻[p] k := by grind
         have hvmk := hvalid.new_subst_var (by grind) ‹_› (by grind) hnests hfmk
         grind
@@ -1155,112 +1755,51 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
         simp [*]
     case compat =>
       intro k hk hkk'
-      have hext : fm₂.Extends fm := by grind [FunMap.extends_update]
-      cases hvalid₂.compat hk hkk' <;> grind
+      cases hvalid₂.compat hk hkk' -- TODO Simplify?
+      · by_cases hk : k < p₁.size
+        · grind
+        · grind
+      · grind
   next => grind [validRefs_subst]
   next => grind [validRefs_subst]
   next => grind [validRefs_subst]
 
 theorem Program.exists_of_ge_in_subst {p : Program} {e : Expr}
-    {vm : VarMap p.size} {fm : FunMap p.size} (h : fm.Valid) {n' : Nat}
-    (hn' : p.size ≤ n') :
-    let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
-    n' < p'.size → ∃ (n : Nat) (_ : n < p.size), fm'[n].getD n = n' := by
-  fun_induction Expr.subst generalizing n' <;> try grind
-  next p vm fm m hm hfm m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum hf ih =>
-    intro hlt
-    rw [hs₂] at ih
-    dsimp only at *
-    have hext : fm₂.Extends fm₁ := by grind
-    have hfm' : fm₂[m].getD m = p.size := by
-      rw [hext.eq (by lia) (by grind)]
-      simp [fm₁]
-    grind [FunMap.valid_update]
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ hsize₁ hum₁ hs₁ p₂ e₂' fm₂ hsize₂ hum₂ hs₂
-      h ih₁ ih₂ =>
-    rw [hs₁] at ih₁
-    rw [hs₂] at ih₂
-    dsimp only at *
-    have hext₁ : fm₂.Extends fm₁ := by grind
-    grind
-  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
-      p₃ ef' fm₃ hsize₃ hum₃ hs₃ hf ihc ihet ihef =>
-    intro hlt
-    rw [hs₁] at ihc
-    rw [hs₂] at ihet
-    rw [hs₃] at ihef
-    dsimp only at *
-    have h₁ : fm₁.Valid := by grind
-    have h₂ : fm₂.Valid := by grind
-    have hext₁₂ : fm₂.Extends fm₁ := by grind
-    have hext₂₃ : fm₃.Extends fm₂ := by grind
-    by_cases n' < p₁.size
-    · grind
-    · replace hn' : p₁.size ≤ n' := by lia
-      by_cases n' < p₂.size
-      · obtain ⟨n, hlt, heq⟩ := ihet h₁ hn' ‹_›
-        by_cases hn : n < p.size
-        · grind
-        · replace hn : p.size ≤ n := by lia
-          obtain ⟨m, hlt', heq'⟩ := ihc h hn hlt
-          have := hext₁₂.eq (show m < p₁.size by lia) (by lia)
-          grind
-      · replace hn' : p₂.size ≤ n' := by lia
-        obtain ⟨n, hlt, heq⟩ := ihef h₂ hn' hlt
-        by_cases hn : n < p.size
-        · exact ⟨n, hn, heq⟩
-        · replace hn : p.size ≤ n := by lia
-          by_cases n < p₁.size
-          · grind
-          · replace hn : p₁.size ≤ n := by lia
-            obtain ⟨m, hlt', heq'⟩ := ihet h₁ hn ‹_›
-            have := hext₂₃.eq (show m < p₂.size by lia) (by lia)
-            grind
-  next p vm fm e i p' e' fm' hsize hum hs hf ih =>
-    rw [hs] at ih
-    dsimp only at *
-    exact ih h hn'
-
-theorem Program.lt_size_of_pathWithout_of_lt {p : Program} {e : Expr}
-    {vm : VarMap p.size} {fm : FunMap p.size} (hp : p.ValidRefs) {m n k : Nat}
-    (hm : m < p.size) (hp : m ⟶[(e.subst p vm fm).program, n]* k) :
-    k < p.size := by
-  induction hp with
-  | refl m hm => exact hm
-  | step m l k hne hs hp ih =>
-    obtain ⟨_, hlf⟩ := hs
-    rw [subst_fn_eq_of_lt hm] at hlf
-    grind
+    {vm : VarMap p.size} {fm : FunMap p.size} (hfm : fm.Valid)
+    (ho : e.DeepOriginal p fm) {n' : Nat} (hn' : p.size ≤ n') :
+    let ⟨p', _, fm', h⟩ := e.subst p vm fm
+    let hsize := h.pre.size_le
+    n' < p'.size → ∃ (n : Nat) (_ : n < p.size), fm'[n] = n' := by
+  intro hlt
+  have hext : (e.subst p vm fm).funMap.Extends fm := FunMap.extends_subst hfm ho
+  obtain ⟨n, hn, hfmn⟩ := hext.exists_of_ge hn' hlt
+  grind
 
 theorem Program.pathWithout_of_pathWithout_in_subst_of_ge {p : Program}
     {e : Expr} {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
-    (hfm : fm.Valid) (hp : p.ValidRefs) (h : p.ValidSubst vm fm)
-    {n' m' k' : Nat} (hn' : p.size ≤ n') (hm' : p.size ≤ m')
-    (hk' : p.size ≤ k') :
-    let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
+    (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
+    (ho : e.DeepOriginal p fm) {n' m' k' : Nat} (hn' : p.size ≤ n')
+    (hm' : p.size ≤ m') (hk' : p.size ≤ k') :
+    let ⟨p', _, fm', h⟩ := e.subst p vm fm
+    let hsize := h.pre.size_le
     n' < p'.size → m' < p'.size → k' < p'.size → m' ⟶[p', n']* k' →
       ∃ (n m k : Nat) (hn : n < p.size) (hm : m < p.size) (hk : k < p.size),
-        fm'[n].getD n = n' ∧ fm'[m].getD m = m' ∧ fm'[k].getD k = k' ∧ m ⟶[p, n]* k := by
+        fm'[n] = n' ∧ fm'[m] = m' ∧ fm'[k] = k' ∧ m ⟶[p, n]* k := by
   intro hnlt hmlt hklt hp'
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
-  have hsize := (e.subst p vm fm).size_ge
-  have hvp' : p'.ValidRefs := validRefs_subst hvm hfm hp
-  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h
+  have hvp' : p'.ValidRefs := validRefs_subst hvm hfm hp ho
+  have h' : p'.ValidSubst vm.extend fm' :=
+    Program.validSubst_subst hvm hfm hp hvalid ho
   induction hp' with
   | refl m' hne' =>
-    obtain ⟨n, hn, hfmn⟩ := exists_of_ge_in_subst hfm hn' hnlt
-    obtain ⟨m, hm, hfmm⟩ := exists_of_ge_in_subst hfm hm' hmlt
+    obtain ⟨n, hn, hfmn⟩ := exists_of_ge_in_subst hfm ho hn' hnlt
+    obtain ⟨m, hm, hfmm⟩ := exists_of_ge_in_subst hfm ho hm' hmlt
     have hne : n ≠ m := by grind
     exact ⟨n, m, m, hn, hm, hm, hfmn, hfmm, hfmm, .refl _ hne⟩
   | step m' l' k' hne' hs' hp' ih =>
-    obtain ⟨m, hm, hfmm⟩ := exists_of_ge_in_subst hfm hm' hmlt
-    have hl' : p.size ≤ l' := by
-      false_or_by_contra
-      rename_i hl'
-      have := lt_size_of_pathWithout_of_lt hp (by simpa using hl') hp'
-      lia
+    obtain ⟨m, hm, hfmm⟩ := exists_of_ge_in_subst hfm ho hm' hmlt
+    have hl' : p.size ≤ l' := by grind
     obtain ⟨_, hlf'⟩ := hs'
     have hllt : l' < p'.size := by grind
     have ⟨n, l, k, hn, hl, hk, hfmn, hfml, hfmk, hp⟩ := ih hl' hk' hllt hklt
@@ -1268,84 +1807,77 @@ theorem Program.pathWithout_of_pathWithout_in_subst_of_ge {p : Program}
     have hlf := h'.fn_localProvenance
       (show m < p'.size by lia) hmlt (by lia) (by grind)
       (show l < p'.size by lia) (by lia) (by simpa [← hfml] using hlf')
-    simp only [Option.some.injEq, Program.subst_fn_eq_of_lt hm, p'] at hlf
+    simp only [Option.some.injEq, prefix_subst.fn_eq hm, p'] at hlf
     obtain heq | hlf := hlf
     · grind
     · exact ⟨n, m, k, hn, hm, hk, hfmn, hfmm, hfmk, .step _ _ _ hne ⟨hm, hlf⟩ hp⟩
 
 theorem Program.free_in_fn_of_free_in_subst_of_ge {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
-    (hfm : fm.Valid) (hp : p.ValidRefs) (h : p.ValidSubst vm fm)
-    {n' m' : Nat} (hn' : p.size ≤ n') (hm' : p.size ≤ m') (hne' : n' ≠ m') :
-    let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
+    (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
+    (ho : e.DeepOriginal p fm) {n' m' : Nat} (hn' : p.size ≤ n')
+    (hm' : p.size ≤ m') (hne' : n' ≠ m') :
+    let ⟨p', _, fm', _⟩ := e.subst p vm fm
     ∀ (_ : m' < p'.size), p'.fn[m'].Free p' n' →
       ∃ (n m : Nat) (hn : n < p.size) (hm : m < p.size),
-        fm'[n].getD n = n' ∧ fm'[m].getD m = m' ∧ p.fn[m].Free p n := by
+        fm'[n] = n' ∧ fm'[m] = m' ∧ p.fn[m].Free p n := by
   intro hmlt hf'
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
-  have hvp' : p'.ValidRefs := validRefs_subst hvm hfm hp
-  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h
+  have hvp' : p'.ValidRefs := validRefs_subst hvm hfm hp ho
+  have h' : p'.ValidSubst vm.extend fm' :=
+    Program.validSubst_subst hvm hfm hp hvalid ho
   obtain ⟨k', hklt, hlv', hp'⟩ := (free_in_fn_iff hmlt hne').mp hf'
-  have hk' : p.size ≤ k' := by grind [subst_fn_eq_of_lt]
+  have hk' : p.size ≤ k' := by grind [prefix_subst.fn_eq]
   have hnlt : n' < p'.size := by grind
   obtain ⟨n, m, k, hn, hm, hk, hfmn, hfmm, hfmk, hp⟩ :=
-    pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp h hn' hm' hk' hnlt hmlt hklt hp'
+    pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp hvalid ho hn' hm' hk' hnlt hmlt hklt hp'
   have hne : n ≠ m := by grind
   have hlv := h'.fn_localProvenance
     (show k < p'.size by lia) hklt (by lia) (by grind)
     (show n < p'.size by lia) (by lia) (by simpa [← hfmn] using hlv')
-  rw [subst_fn_eq_of_lt hk] at hlv
+  rw [prefix_subst.fn_eq hk] at hlv
   simp only [Option.some.injEq, hp.ne_end, false_or] at hlv
   exact ⟨n, m, hn, hm, hfmn, hfmm, (free_in_fn_iff hm hne).mpr ⟨k, hk, hlv, hp⟩⟩
 
 theorem Expr.free_of_free_in_subst_of_ge {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
-    (hfm : fm.Valid) (hp : p.ValidRefs) (h : p.ValidSubst vm fm)
-    (he : e.ValidRefs p) (hns : e.NoSubst fm) {n' : Nat} (hn' : p.size ≤ n') :
-    let ⟨p', e', fm', _, _⟩ := e.subst p vm fm
+    (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
+    (ho : e.DeepOriginal p fm) {n' : Nat} (hn' : p.size ≤ n') :
+    let ⟨p', e', fm', h⟩ := e.subst p vm fm
+    let hsize := h.pre.size_le
     e'.Free p' n' → ∃ (n : Nat) (_ : n < p.size),
-      fm'[n].getD n = n' ∧ e.Free p n := by
+      fm'[n] = n' ∧ e.Free p n := by
   intro hf
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
-  have hvp' : p'.ValidRefs := Program.validRefs_subst hvm hfm hp
-  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h
-  have hfm' : fm'.Valid := FunMap.valid_subst hfm
+  have hvp' : p'.ValidRefs := Program.validRefs_subst hvm hfm hp ho
+  have h' : p'.ValidSubst vm.extend fm' :=
+    Program.validSubst_subst hvm hfm hp hvalid ho
+  have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
   have hlt : n' < p'.size :=
-    lt_size_of_free hvp' (validRefs_subst hvm hfm he) hf
-  obtain ⟨n, hn, heq⟩ := Program.exists_of_ge_in_subst hfm hn' hlt
+    lt_size_of_free hvp' (validRefs_subst hvm hfm ho) hf
+  obtain ⟨n, hn, heq⟩ := Program.exists_of_ge_in_subst hfm ho hn' hlt
   obtain hlv' | ⟨m', k', hk', hlf', hp', hlv'⟩ := free_iff.mp hf
   · refine ⟨n, hn, heq, free_of_localVar ?_⟩
-    simpa using localProvenance_subst hvm hfm he hns (by lia) (by lia) (heq ▸ hlv')
+    simpa using localProvenance_subst hvm hfm ho (by lia) (by lia) (heq ▸ hlv')
   · by_cases hm' : m' < p.size
-    · replace hk' := Program.lt_size_of_pathWithout_of_lt hp ‹_› hp'
-      grind [Program.subst_fn_eq_of_lt]
+    · have hk' : k' < p.size := by grind
+      grind [Program.prefix_subst.fn_eq]
     · simp only [Nat.not_lt] at hm'
-      have hk' : p.size ≤ k' := by grind [Program.subst_fn_eq_of_lt]
+      have hk' : p.size ≤ k' := by grind [Program.prefix_subst.fn_eq]
       obtain ⟨n, m, k, hn, hm, hk, hfmn, hfmm, hfmk, hp⟩ :=
-        Program.pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp h hn' hm' hk'
-          ‹_› (validRefs_subst hvm hfm he hlf') ‹_› hp'
-      have hlf := localProvenance_subst hvm hfm he hns
+        Program.pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp hvalid ho hn' hm' hk'
+          ‹_› (validRefs_subst hvm hfm ho hlf') ‹_› hp'
+      have hlf := localProvenance_subst hvm hfm ho
         (show m < p'.size by lia) (by lia) (by simpa [← hfmm] using hlf')
       simp only [reduceCtorEq, false_or] at hlf
       have hlv := h'.fn_localProvenance
         (show k < p'.size by lia) (show k' < p'.size by grind) (by lia) (by grind)
         (show n < p'.size by lia) (by lia) (by simpa [← hfmn] using hlv')
-      rw [Program.subst_fn_eq_of_lt hk] at hlv
+      rw [Program.prefix_subst.fn_eq hk] at hlv
       simp only [Option.some.injEq, hp.ne_end, false_or] at hlv
       exact ⟨n, hn, hfmn, free_iff.mpr <| Or.inr ⟨m, k, hk, hlf, hp, hlv⟩⟩
-
-theorem Program.lt_size_of_free_in_subst_of_lt {p : Program} {e : Expr}
-    {vm : VarMap p.size} {fm : FunMap p.size} (h : p.ValidRefs)
-    {n m : Nat} (hm : m < p.size) (hne : n ≠ m) :
-    let ⟨p', _, _, _, _⟩ := e.subst p vm fm
-    p'.fn[m].Free p' n → n < p.size := by
-  intro hf
-  obtain ⟨k, hk, hlv, hp⟩ := (free_in_fn_iff (by lia) hne).mp hf
-  have hk := lt_size_of_pathWithout_of_lt h hm hp
-  rw [subst_fn_eq_of_lt hk] at hlv
-  exact h hk hlv
 
 theorem Program.nests_of_nests_in_subst_of_lt {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} {m n : Nat} (hn : n < p.size)
@@ -1355,25 +1887,20 @@ theorem Program.nests_of_nests_in_subst_of_lt {p : Program} {e : Expr}
 theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (h : p.ValidSubst vm fm)
-    {n' m' : Nat} (hn' : p.size ≤ n') :
-    let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
+    (ho : e.DeepOriginal p fm) {n' m' : Nat} (hn' : p.size ≤ n') :
+    let ⟨p', _, fm', _⟩ := e.subst p vm fm
     n' ≻[p'] m' → ∃ (n m : Nat) (hn : n < p.size) (hm : m < p.size),
-      fm'[n].getD n = n' ∧ fm'[m].getD m = m' ∧ n ≻[p] m := by
+      fm'[n]'(by grind) = n' ∧ fm'[m]'(by grind) = m' ∧ n ≻[p] m := by
   intro hnests'
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
-  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h
-  have hfm' : fm'.Valid := FunMap.valid_subst hfm
+  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h ho
+  have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
   induction hnests' with
   | free n' m' hltn hltm hne' hf' =>
-    have hm' : p.size ≤ m' := by
-      false_or_by_contra
-      rename_i hm'
-      simp only [Nat.not_le] at hm'
-      have := lt_size_of_free_in_subst_of_lt hp hm' hne' hf'
-      lia
+    have hm' : p.size ≤ m' := by grind
     obtain ⟨n, m, hn, hm, hfmn, hfmm, hf⟩ :=
-      Program.free_in_fn_of_free_in_subst_of_ge hvm hfm hp h hn' hm' hne' hltm hf'
+      Program.free_in_fn_of_free_in_subst_of_ge hvm hfm hp h ho hn' hm' hne' hltm hf'
     have hne : n ≠ m := by grind
     exact ⟨n, m, hn, hm, hfmn, hfmm, .free _ _ hn hm hne hf⟩
   | trans n' k' m' hnests₁' hnests₂' ih₁ ih₂ =>
@@ -1381,12 +1908,12 @@ theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
     obtain ⟨n, k, hn, hk, hfmn, hfmk, hnests₁⟩ := ih₁ hn'
     obtain ⟨l, m, hl, hm, hfml, hfmm, hnests₂⟩ := ih₂ hk'
     obtain rfl : k = l :=
-      hfm'.inj (by lia) (by lia) (by lia) (by lia) (by simp [fm', hfmk, hfml])
+      hfm'.inj (by grind) (by grind) (by lia) (by lia) (by simp [fm', hfmk, hfml])
     exact ⟨n, m, hn, hm, hfmn, hfmm, .trans _ _ _ hnests₁ hnests₂⟩
 
 theorem Program.subst_wf {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
-    (h : p.ValidSubst vm fm) (hwf : p.WF) :
+    (h : p.ValidSubst vm fm) (ho : e.DeepOriginal p fm) (hwf : p.WF) :
     (e.subst p vm fm).program.WF := by
   intro m hnests
   let p' := (e.subst p vm fm).program
@@ -1394,18 +1921,18 @@ theorem Program.subst_wf {p : Program} {e : Expr} {vm : VarMap p.size}
   by_cases hm : m < p.size
   · exact hwf <| nests_of_nests_in_subst_of_lt hm hp hnests
   · simp only [Nat.not_lt] at hm
-    have hvalid' : p'.ValidSubst vm.extend fm' := validSubst_subst hvm hfm hp h
-    have hfm' : fm'.Valid := FunMap.valid_subst hfm
+    have hvalid' : p'.ValidSubst vm.extend fm' := validSubst_subst hvm hfm hp h ho
+    have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
     replace ⟨k, l, hk, hl, hfmk, hfml, hnests⟩ :=
-      nests_of_nests_in_subst_of_ge hvm hfm hp h hm hnests
+      nests_of_nests_in_subst_of_ge hvm hfm hp h ho hm hnests
     obtain rfl : k = l :=
-      hfm'.inj (by lia) (by lia) (by lia) (by lia) (by simp [fm', hfmk, hfml])
+      hfm'.inj (by grind) (by grind) (by lia) (by lia) (by simp [fm', hfmk, hfml])
     exact hwf hnests
 
 def Expr.WFSubst (e : Expr) (p : Program) (vm : VarMap p.size)
     (fm : FunMap p.size) : Prop :=
   ∀ ⦃n m⦄ (_ : n < p.size) (_ : m < p.size),
-    n ≻[p] m → e.Free p m → vm[n] ≠ var n → vm[m] ≠ var m ∧ fm[m].getD m ≠ m
+    n ≻[p] m → e.Free p m → vm[n] ≠ var n → vm[m] ≠ var m ∧ fm[m] ≠ m
 
 @[grind =]
 theorem Expr.wfSubst_bin_iff {k : BinKind} {e₁ e₂ : Expr} {p : Program}
@@ -1455,9 +1982,10 @@ theorem Expr.wfSubst_proj_iff {e : Expr} {i : Fin 2} {p : Program}
     exact h hn hm hnests hf hne
 
 theorem Expr.wfSubst_in_subst {p : Program} {e₁ e₂ : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} (hp : p.ValidRefs) (he : e₁.ValidRefs p)
+    {fm : FunMap p.size} (hfm : fm.Valid) (hp : p.ValidRefs)
+    (he₁ : e₁.ValidRefs p) (ho : e₂.DeepOriginal p fm)
     (h : e₁.WFSubst p vm fm) :
-    let ⟨p', _, fm', _, _⟩ := e₂.subst p vm fm
+    let ⟨p', _, fm', _⟩ := e₂.subst p vm fm
     e₁.WFSubst p' vm.extend fm' := by
   grind [WFSubst]
 
@@ -1483,52 +2011,48 @@ theorem Expr.exists_free_subst_var {p : Program} {e : Expr} {vm : VarMap p.size}
 
 theorem FunMap.ne_in_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} {n m : Nat} {r : RefKind} (hvm : vm.Valid fm)
-    (hfm : fm.Valid) (hp : p.ValidRefs) (he : e.ValidRefs p)
-    (hwfs : e.WFSubst p vm fm) (hns : e.NoSubst fm) (hn : n < p.size)
-    (hvmn : vm[n] ≠ .var n) (hl : e.Local m r) (hnests : n ≻[p] m) :
-    let ⟨_, _, fm', _, _⟩ := e.subst p vm fm
-    (fm'[m]'(by grind)).getD m ≠ m := by
-  have hm : m < p.size := he hl
+    (hfm : fm.Valid) (hp : p.ValidRefs) (ho : e.DeepOriginal p fm)
+    (hwfs : e.WFSubst p vm fm) (hn : n < p.size) (hvmn : vm[n] ≠ .var n)
+    (hl : e.Local m r) (hnests : n ≻[p] m) :
+    let ⟨_, _, fm', _⟩ := e.subst p vm fm
+    (fm'[m]'(by grind)) ≠ m := by
+  have hm : m < p.size := ho.validRefs hl
   fun_induction Expr.subst
   next p e vm fm h =>
     obtain ⟨k, hk, hvmk, hf⟩ :=
-      Expr.exists_free_subst_var he hwfs hn hvmn hnests hl
+      Expr.exists_free_subst_var ho.validRefs hwfs hn hvmn hnests hl
     have := h k hk hf
     contradiction
   next p vm fm m h =>
     obtain ⟨rfl, rfl⟩ := Expr.local_var_iff.mp hl
     obtain ⟨-, hmm'⟩ := hwfs _ hm hnests .var hvmn
     exact hmm'
-  next p vm fm m hm heq m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
     obtain ⟨rfl, rfl⟩ := Expr.local_fn_iff.mp hl
-    have hext : fm₂.Extends fm₁ := by grind
-    grind [hext.eq]
-  next p vm fm m hm m' heq h =>
+    have hext : fm₂.Extends fm₁ := by grind [valid_update]
+    grind
+  next p vm fm m hm hfmm hf =>
+    dsimp only
     obtain ⟨rfl, rfl⟩ := Expr.local_fn_iff.mp hl
-    intro hfmm
-    conv at hl => arg 1; rw [← hfmm]
-    simp [hns _ hl] at heq
+    assumption
   next => grind
   next => grind
-  next p vm fm f e p₁ f' fm₁ hsize₁ hum₁ hs₁ p₂ e' fm₂ hsize₂ hum₂ hs₂ h ihf ihe =>
-    rw [hs₁] at ihf
-    rw [hs₂] at ihe
+  next p vm fm k e₁ e₂ p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ h ih₁ ih₂ =>
+    rw [hs₁] at ih₁
+    rw [hs₂] at ih₂
     dsimp only at *
     have hext : fm₂.Extends fm₁ := by grind
-    grind [Program.validRefs_subst, Expr.wfSubst_in_subst,
-      Expr.noSubst_of_extends_of_noSubst]
-  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
-      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
+    grind [Program.validRefs_subst, Expr.wfSubst_in_subst]
+  next p vm fm c et ef p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃ hs₃
+      hf ihc ihet ihef =>
     rw [hs₁] at ihc
     rw [hs₂] at ihet
     rw [hs₃] at ihef
     dsimp only at *
     have hext₁ : fm₂.Extends fm₁ := by grind
     have hext₂ : fm₃.Extends fm₂ := by grind
-    grind [Program.validRefs_subst, Expr.wfSubst_in_subst,
-      Expr.noSubst_of_extends_of_noSubst]
-  next p vm fm e i p' e' fm' hsize hum hs hf ih =>
+    grind [Program.validRefs_subst, Expr.wfSubst_in_subst]
+  next p vm fm e i p' e' fm' h hs hf ih =>
     rw [hs] at ih
     grind
 
@@ -1537,9 +2061,9 @@ def FunMap.StrongProvenance (p : Program) (fm : FunMap p.size)
   ∀ ⦃m' r⦄ (_ : m' < p.size),
     e'.Local m' r →
       ∃ (m : Nat) (_ : m < p.size),
-        fm[m].getD m = m ∧ (∀ k (_ : k < p.size), vm[k] ≠ .var k → k ⊁[p] m) ∧
+        fm[m] = m ∧ (∀ k (_ : k < p.size), vm[k] ≠ .var k → k ⊁[p] m) ∧
           (e.LocalVar m ∧ vm[m].Local m' r ∨ e.LocalFn m ∧ m' = m ∧ r = .fn) ∨
-          fm[m].getD m = m' ∧ (m = k ∨ e.Local m r ∧ m' ≠ m)
+          fm[m] = m' ∧ (m = k ∨ e.Local m r ∧ m' ≠ m)
 
 theorem FunMap.strongProvenance_bin {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {k : BinKind} {e₁ e₁' e₂ e₂' : Expr}
@@ -1568,9 +2092,8 @@ theorem FunMap.strongProvenance_proj {p : Program} {vm : VarMap p.size}
 theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
-    (hwf : p.WF) (he : e.ValidRefs p)
-    (hns : e.NoSubst fm) (hwfe : e.WFSubst p vm fm) :
-    let ⟨p', e', fm', _, _⟩ := e.subst p vm fm
+    (hwf : p.WF) (ho : e.DeepOriginal p fm) (hwfe : e.WFSubst p vm fm) :
+    let ⟨p', e', fm', _⟩ := e.subst p vm fm
     fm'.StrongProvenance p' vm.extend e e' none := by
   fun_induction subst
   next p e vm fm h =>
@@ -1578,7 +2101,7 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
     have hnnests : ∀ m (_ : m < p.size), vm[m] ≠ var m → m ⊁[p] n := by
       intro m hm hvmm hnests
       obtain ⟨k, hk, hvmk, hf⟩ :=
-        exists_free_subst_var he hwfe hm hvmm hnests hl
+        exists_free_subst_var ho.validRefs hwfe hm hvmm hnests hl
       have := h k hk hf
       contradiction
     have hfmn := hvalid.eq_of_not_nests hn hnnests
@@ -1595,29 +2118,24 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
       obtain ⟨k, hk, hf, hvmk⟩ := h
       have .var := hf
       simp only [getElem?_pos, Option.getD_some, hk] at hl
-      by_cases hkk' : fm[k].getD k = k
+      by_cases hkk' : fm[k] = k
       · refine ⟨k, hk, Or.inl ⟨hkk', ?_, Or.inl ⟨.var, by grind⟩⟩⟩
         intro l hl hvml hnests
         exact hvmk <| hvalid.new_subst_var hl hk (by grind) hnests hkk'
       · refine ⟨k, hk, Or.inr ?_⟩
         cases hvalid.compat hk hkk' <;> grind
     · simp_all
-  next p vm fm m hm heq m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
     intro m'' r hm' hl
-    simp only [Expr.local_fn_iff, f''] at hl
+    simp only [Expr.local_fn_iff, e'] at hl
     obtain ⟨hr, rfl⟩ := hl
-    have hext : fm₂.Extends fm₁ := by grind
+    have hext : fm₂.Extends fm₁ := by grind [FunMap.valid_update]
     exact ⟨m, by lia, Or.inr (by grind [hext.eq])⟩
-  next p vm fm m hm m' heq h =>
+  next p vm fm m hm hfmm hf =>
     intro n r hn hl
     simp only [local_fn_iff] at hl
     obtain ⟨rfl, rfl⟩ := hl
-    refine ⟨m, hm, Or.inr ⟨by simp [heq], Or.inr ⟨.fn, ?_⟩⟩⟩
-    by_cases m' = m
-    · have hl : (fn m).Local (fm[m].getD m) .fn := by simp [*]
-      simp [hns _ hl] at heq
-    · simp [*]
+    exact ⟨m, hm, Or.inr ⟨rfl, Or.inr ⟨.fn, hfmm⟩⟩⟩
   next p vm fm m hm h =>
     intro m' r hm' hl
     simp only [local_fn_iff] at hl
@@ -1625,30 +2143,29 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
   next p vm fm c h =>
     intro m' r hm' hl
     simp at hl
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ hsize₁ hum₁ hs₁ p₂ e₂' fm₂ hsize₂ hum₂ hs₂ h ihf ihe =>
-    rw [hs₁] at ihf
-    rw [hs₂] at ihe
+  next p vm fm k e₁ e₂ p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ h ih₁ ih₂ =>
+    rw [hs₁] at ih₁
+    rw [hs₂] at ih₂
     dsimp only at *
     have hp₁ : p₁.ValidRefs := by grind [Program.validRefs_subst]
     have hvalid₂ : p₂.ValidSubst vm.extend fm₂ := by
       grind [Program.validSubst_subst]
     have he₁' : fm₁.StrongProvenance p₁ vm.extend e₁ e₁' none := by grind
     have he₂' : fm₂.StrongProvenance p₂ vm.extend e₂ e₂' none := by
-      grind [noSubst_of_extends_of_noSubst, wfSubst_in_subst,
-        Program.validSubst_subst, Program.subst_wf]
+      grind [wfSubst_in_subst, Program.validSubst_subst, Program.subst_wf]
     have hext : fm₂.Extends fm₁ := by grind
     replace he₁' : fm₂.StrongProvenance p₂ vm.extend e₁ e₁' none := by
       intro n r hn hl
       replace hn : n < p₁.size := by grind [validRefs_subst]
       obtain ⟨m, hm, ⟨hmm', hnnests, h⟩ | ⟨hfmm, h | ⟨hl, hor⟩⟩⟩ := he₁' hn hl
-      · refine ⟨m, by lia, Or.inl
-          ⟨hvalid₂.eq_of_not_nests (by lia) ?hf, ?hf, by grind⟩⟩
+      · refine ⟨m, by grind, Or.inl
+          ⟨hvalid₂.eq_of_not_nests (by grind) ?hf, ?hf, by grind⟩⟩
         grind
       · contradiction
       · exact ⟨m, by grind, Or.inr ⟨by grind, Or.inr ⟨hl, by grind⟩⟩⟩
     exact FunMap.strongProvenance_bin he₁' he₂'
-  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
-      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
+  next p vm fm c et ef p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃ hs₃
+      hf ihc ihet ihef =>
     rw [hs₁] at ihc
     rw [hs₂] at ihet
     rw [hs₃] at ihef
@@ -1659,19 +2176,19 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
       grind [Program.validRefs_subst, Program.validSubst_subst]
     have hc' : fm₁.StrongProvenance p₁ vm.extend c c' none := by grind
     have het' : fm₂.StrongProvenance p₂ vm.extend et et' none := by
-      grind [noSubst_of_extends_of_noSubst, wfSubst_in_subst,
-        Program.validRefs_subst, Program.validSubst_subst, Program.subst_wf]
+      grind [wfSubst_in_subst, Program.validRefs_subst,
+        Program.validSubst_subst, Program.subst_wf]
     have hef' : fm₃.StrongProvenance p₃ vm.extend ef ef' none := by
-      grind [noSubst_of_extends_of_noSubst, wfSubst_in_subst,
-        Program.validRefs_subst, Program.validSubst_subst, Program.subst_wf]
+      grind [wfSubst_in_subst, Program.validRefs_subst,
+        Program.validSubst_subst, Program.subst_wf]
     have hext₁ : fm₂.Extends fm₁ := by grind
     have hext₂ : fm₃.Extends fm₂ := by grind
     replace hc' : fm₃.StrongProvenance p₃ vm.extend c c' none := by
       intro n r hn hl
       replace hn : n < p₁.size := by grind [validRefs_subst]
       obtain ⟨m, hm, ⟨hmm', hnnests, h⟩ | ⟨hfmm, h | ⟨hl, hor⟩⟩⟩ := hc' hn hl
-      · refine ⟨m, by lia, Or.inl
-          ⟨hvalid₃.eq_of_not_nests (by lia) ?hc, ?hc, by grind⟩⟩
+      · refine ⟨m, by grind, Or.inl
+          ⟨hvalid₃.eq_of_not_nests (by grind) ?hc, ?hc, by grind⟩⟩
         grind
       · contradiction
       · exact ⟨m, by grind, Or.inr ⟨by grind, Or.inr ⟨hl, by grind⟩⟩⟩
@@ -1679,13 +2196,13 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
       intro n r hn hl
       replace hn : n < p₂.size := by grind [validRefs_subst]
       obtain ⟨m, hm, ⟨hmm', hnnests, h⟩ | ⟨hfmm, h | ⟨hl, hor⟩⟩⟩ := het' hn hl
-      · refine ⟨m, by lia, Or.inl
-          ⟨hvalid₃.eq_of_not_nests (by lia) ?het, ?het, by grind⟩⟩
+      · refine ⟨m, by grind, Or.inl
+          ⟨hvalid₃.eq_of_not_nests (by grind) ?het, ?het, by grind⟩⟩
         grind
       · contradiction
       · exact ⟨m, by grind, Or.inr ⟨by grind, Or.inr ⟨hl, by grind⟩⟩⟩
     exact FunMap.strongProvenance_cond hc' het' hef'
-  next p vm fm e i p' e' fm' hsize hum hs hf ih =>
+  next p vm fm e i p' e' fm' h hs hf ih =>
     rw [hs] at ih
     apply FunMap.strongProvenance_proj
     grind
@@ -1705,7 +2222,7 @@ theorem Program.push_wf {p : Program} {b : Expr} {t₁ t₂ : Ty} (hp : p.ValidR
 def Program.WFSubst (p : Program) (vm : VarMap p.size) (fm : FunMap p.size) :
     Prop :=
   ∀ ⦃m m'⦄ (_ : m < p.size) (_ : m' < p.size),
-    fm[m].getD m = m' → m' ≠ m → fm.StrongProvenance p vm p.fn[m] p.fn[m'] m
+    fm[m] = m' → m' ≠ m → fm.StrongProvenance p vm p.fn[m] p.fn[m'] m
 
 theorem Program.wfSubst_fn_mk {p : Program} {n : Nat} {v : Expr}
     (hn : n < p.size) (hwf : p.WF) :
@@ -1728,7 +2245,8 @@ theorem Program.wfSubst_mk {p : Program} {n : Nat} {v : Expr} :
 theorem Program.wfSubst_push_recurse {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} (hfm : fm.Valid) (hp : p.ValidRefs) {l i : Nat}
     (hl : l < p.size) (hi : i < p.size) (hvml : vm[l] ≠ .var l)
-    (hfmi : fm[i] = none) (hnestsi : l ≻[p] i) (hwfs : p.WFSubst vm fm) :
+    (hfmi : fm[i] = i) (hnestsi : l ≻[p] i)
+    (hwfs : p.WFSubst vm fm) :
     (p.push (.recurse p.size) p.ty[i] p.ret[i]).WFSubst
       (vm.update i hi) (fm.update i hi) := by
   intro m m' hm hm' rfl hmm'
@@ -1739,7 +2257,7 @@ theorem Program.wfSubst_push_recurse {p : Program} {vm : VarMap p.size}
     · intro n r hn hlc
       grind
     · intro n r hn hlc
-      replace hm' : fm[m].getD m < p.size := by grind
+      replace hm' : fm[m] < p.size := by grind
       simp only [ne_eq, not_false_eq_true, FunMap.getElem_update_ne,
         Vector.getElem_push_lt, *] at hlc hmm'
       replace hn : n < p.size := by grind
@@ -1751,36 +2269,39 @@ theorem Program.wfSubst_push_recurse {p : Program} {vm : VarMap p.size}
       · have : i ≠ k := by grind
         exact ⟨k, by lia, by simp [*]⟩
 
+set_option maxHeartbeats 1000000 in
 theorem Program.wfSubst_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid)
     (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm) (hwf : p.WF)
-    (hwfs : p.WFSubst vm fm) (he : e.ValidRefs p)
+    (ho : e.DeepOriginal p fm) (hwfs : p.WFSubst vm fm)
     (hwfe : e.WFSubst p vm fm) :
-    let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
+    let ⟨p', _, fm', _⟩ := e.subst p vm fm
     p'.WFSubst vm.extend fm' := by
   fun_induction Expr.subst <;> try simpa using hwfs
-  next p vm fm m hm heq m' vm₁ fm₁ p₁ hsize₁ hum₁ p₂ f' fm₂ hsize₂ hum₂ hs₂
-      p₃ f'' hsize hum h ih =>
+  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
     rw [hs₂] at ih
     dsimp only at *
-    simp only [Classical.not_forall] at h
-    obtain ⟨l, hl, hf, hvml⟩ := h
+    simp only [Classical.not_forall] at hf
+    obtain ⟨l, hl, hf, hvml⟩ := hf
     have hnestsm : l ≻[p] m := by
       replace .fn _ hm hne hf := hf
       exact .free _ _ hl hm hne hf
+    obtain ⟨hom, hm, ho⟩ := Expr.deepOriginal_fn_iff.mp ho
+    have ho' : p.fn[m].DeepOriginal p₁ fm₁ := by grind
     have hvm₁ : vm₁.Valid fm₁ := VarMap.valid_update hm hvm hfm
-    have hfm₁ : fm₁.Valid := FunMap.valid_update hm heq hfm
+    have hfm₁ : fm₁.Valid := FunMap.valid_update hm hom hfm
     have hp₁ : p₁.ValidRefs := validRefs_push hp (by grind)
     have hvalid₁ : p₁.ValidSubst vm₁ fm₁ :=
       validSubst_push_recurse hl hm hfm hp hvml hnestsm hvalid
     have hwf₁ : p₁.WF := push_wf hp hwf
     have hwfs₁ : p₁.WFSubst vm₁ fm₁ :=
-      wfSubst_push_recurse hfm hp hl hm hvml heq hnestsm hwfs
-    have hfnm : p.fn[m].ValidRefs p₁ := Expr.validRefs_in_push (hp hm)
+      wfSubst_push_recurse hfm hp hl hm hvml hfmm hnestsm hwfs
     have hwfsm : p.fn[m].WFSubst p₁ vm₁ fm₁ := by
       intro n k hn hk hnests hf hne
       by_cases m = k
-      · grind
+      · simp only [VarMap.getElem_update_eq, ne_eq, Expr.var.injEq, FunMap.getElem_update_eq,
+          and_self, vm₁, fm₁, *]
+        lia
       · replace hn : n < p.size := by grind
         simp only [ne_eq, vm₁] at hne ⊢
         replace hnests : n ≻[p] k := by grind
@@ -1792,44 +2313,51 @@ theorem Program.wfSubst_subst {p : Program} {e : Expr}
           intro rfl
           exfalso
           exact hwf (nests_iff.mpr ⟨hm, _, hk, ‹m ≠ k›.symm, hf, .nests _ hnests⟩)
-        have := hwfe hn hk hnests (.fn _ hm ‹m ≠ k›.symm hf)
-        grind
-    have hwfs₂ := ih hvm₁ hfm₁ hp₁ hvalid₁ hwf₁ hwfs₁ hfnm hwfsm
-    have hext₁ : fm₂.Extends fm₁ := by grind
-    have hfm₂ : fm₂.Valid := by grind
-    have hfmm : fm₂[m].getD m = m' := by grind [hext₁.eq]
-    have hfmm' : fm₂[m'].getD m' = m' := by grind
+        simp only [ne_eq, not_false_eq_true, VarMap.getElem_update_ne, hn, hmn] at hne
+        have := hwfe hn hk hnests (.fn _ hm ‹m ≠ k›.symm hf) hne
+        simp [fm₁, *]
+    have hwfs₂ := ih hvm₁ hfm₁ hp₁ hvalid₁ hwf₁ ho' hwfs₁ hwfsm
+    have hext₂ : fm₂.Extends fm₁ := by grind
+    have hfm₂ : fm₂.Valid := hext₂.valid
+    have hfmm : fm₂[m]'(by grind) = m' := by grind [hext₂.eq]
+    have hfmm' : fm₂[m']'(by grind) = m' := by grind
     have hp₃ : p₃ = ((Expr.fn m).subst p vm fm).program := by
       grind [Expr.subst]
-    have hpre : p.Prefix p₃ := hp₃ ▸ prefix_subst
+    have hpre₂ : p.Prefix p₂ := prefix_trans prefix_push h₂.pre
+    have hpre₃ : p.Prefix p₃ := hp₃ ▸ prefix_subst
     intro n n' hn hn' rfl hnn'
     replace hn : n < p.size := by
       false_or_by_contra
       have hn' : p₁.size ≤ n := by grind
       obtain ⟨k, hk, hfmk⟩ :=
-        exists_of_ge_in_subst (e := p.fn[m]) (vm := vm₁) hfm₁ hn' (by lia)
+        exists_of_ge_in_subst (e := p.fn[m]) (vm := vm₁) hfm₁ ho' hn' (by lia)
       have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
       subst p₂
-      grind
+      grind [hfm₂.idem]
     by_cases m = n
     · subst n
       simp only [ne_eq, show m' ≠ m by lia, not_false_eq_true, Vector.getElem_set_ne,
         Vector.getElem_set_self, p₃, hfmm]
-      have hf' := Expr.strongProvenance_subst hvm₁ hfm₁ hp₁ hvalid₁ hwf₁ hfnm
-        (Expr.noSubst_of_extends_of_noSubst (by grind) (FunMap.extends_update hm heq)
-          (hvalid.fn_noSubst hm heq)) hwfsm
+      have hf' := Expr.strongProvenance_subst hvm₁ hfm₁ hp₁ hvalid₁ hwf₁ ho' hwfsm
       rw [hs₂] at hf'
       dsimp only at hf'
       rw [show p₂.fn[m] = p.fn[m] by grind]
       intro k r hk hlc
-      obtain ⟨l, hl, ⟨hll', hnnests, h⟩ | ⟨hfml, h | ⟨hlc, h⟩⟩⟩ := hf' hk hlc
-      · by_cases m = l
+      obtain ⟨l, hl', ⟨hll', hnnests, h⟩ | ⟨hfml, h | ⟨hlc, h⟩⟩⟩ := hf' hk hlc
+      · have hl : l < p.size := by grind
+        by_cases m = l
         · exact ⟨m, by lia, Or.inr (by grind)⟩
-        · exact ⟨l, hl, Or.inl ⟨hll', by grind, by grind⟩⟩
+        · exact ⟨l, hl', Or.inl ⟨hll', by
+            intro k hk hvmk
+            simp only [p₃] at hpre₃
+            simp [nests_in_prefix_iff hl hp hpre₂] at hnnests
+            rw [nests_in_prefix_iff hl hp hpre₃]
+            exact hnnests k hk (by grind),
+            by grind⟩⟩
       · contradiction
-      · exact ⟨l, hl, Or.inr ⟨hfml, Or.inr ⟨hlc, h⟩⟩⟩
+      · exact ⟨l, hl', Or.inr ⟨hfml, Or.inr ⟨hlc, h⟩⟩⟩
     · have : m' ≠ n := by grind
-      have : m' ≠ fm₂[n].getD n := by
+      have : m' ≠ fm₂[n] := by
         intro h
         have := hfm₂.inj (show m < p₂.size by lia) (by lia) (by lia) hnn' (hfmm ▸ h)
         contradiction
@@ -1839,7 +2367,15 @@ theorem Program.wfSubst_subst {p : Program} {e : Expr}
         hwfs₂ (by lia) (by lia) rfl hnn' hk hlc
       · by_cases m = l
         · exact ⟨m, by lia, Or.inr (by grind)⟩
-        · rw [show vm₁.extend[l] = vm.extend[l] by grind] at h
+        · have : vm₁.extend[l] = vm.extend[l] := by
+            simp only [vm₁]
+            by_cases hl' : l < p.size
+            · simp [show l < p.size + 1 by lia, *]
+            · simp only [Nat.not_lt] at hl'
+              by_cases l = p.size
+              · simp [*]
+              · simp [show p.size + 1 ≤ l by lia, *]
+          rw [this] at h
           refine ⟨l, hl, Or.inl ⟨hmm', ?_, h⟩⟩
           rw [show p₂.fn[n] = p.fn[n] by grind] at h
           replace hl : l < p.size := by grind
@@ -1848,46 +2384,47 @@ theorem Program.wfSubst_subst {p : Program} {e : Expr}
           exact hnnests o ho (by grind) hnests
       · grind
       · grind
-  next p vm fm f e p₁ f' fm₁ hsize₁ hum₁ hs₁ p₂ e' fm₂ hsize₂ hum₂ hs₂ h ihf ihe =>
+  next p vm fm k e₁ e₂ p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ h ih₁ ih₂ =>
     grind [validRefs_subst, validSubst_subst, subst_wf, Expr.wfSubst_in_subst]
-  next p vm fm c et ef p₁ c' fm₁ hsize₁ hum₁ hs₁ vm₁ p₂ et' fm₂ hsize₂ hum₂ hs₂
-      p₃ ef' fm₃ hsize₃ hum₃ hs₃ h ihc ihet ihef =>
+  next p vm fm c et ef p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃ hs₃
+      hf ihc ihet ihef =>
     grind [validRefs_subst, validSubst_subst, subst_wf, Expr.wfSubst_in_subst]
   next => grind
 
 theorem Program.free_in_fn_of_free_in_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
-    (hwf : p.WF) (hwfs : p.WFSubst vm fm) (he : e.ValidRefs p)
+    (hwf : p.WF) (hwfs : p.WFSubst vm fm) (ho : e.DeepOriginal p fm)
     (hwfe : e.WFSubst p vm fm) {n' m m' : Nat} (hm : m < p.size) :
-    let ⟨p', _, fm', _, _⟩ := e.subst p vm fm
-    ∀ (_ : m' < p'.size), fm'[m].getD m = m' → m' ≠ m → n' ≠ m' → p'.fn[m'].Free p' n' →
+    let ⟨p', _, fm', h⟩ := e.subst p vm fm
+    let hsize := h.pre.size_le
+    ∀ (_ : m' < p'.size), fm'[m] = m' → m' ≠ m → n' ≠ m' → p'.fn[m'].Free p' n' →
       ∃ (n : Nat) (hn : n < p.size), p.fn[m].Free p n ∧
-          (fm'[n].getD n = n ∧ vm[n].Free p n' ∨ fm'[n].getD n = n' ∧ n' ≠ n) := by
+          (fm'[n] = n ∧ vm[n].Free p n' ∨ fm'[n] = n' ∧ n' ≠ n) := by
   intro hm' hfmm hmm' hne hf
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
-  let hsize := (e.subst p vm fm).size_ge
-  have hfm' : fm'.Valid := FunMap.valid_subst hfm
-  have hp' : p'.ValidRefs := validRefs_subst hvm hfm hp
+  let hsize := (e.subst p vm fm).props.pre.size_le
+  have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
+  have hp' : p'.ValidRefs := validRefs_subst hvm hfm hp ho
   have hvalid' : p'.ValidSubst vm.extend fm' :=
-    validSubst_subst hvm hfm hp hvalid
+    validSubst_subst hvm hfm hp hvalid ho
   have hwfs' : p'.WFSubst vm.extend fm' :=
-    wfSubst_subst hvm hfm hp hvalid hwf hwfs he hwfe
+    wfSubst_subst hvm hfm hp hvalid hwf ho hwfs hwfe
   obtain ⟨k', hk', hlv, hpath⟩ := (free_in_fn_iff _ hne).mp hf
   induction hpath generalizing m with
   | refl m' hne =>
     have hn' : n' < p'.size := by grind
     obtain ⟨n, hn, ⟨hnn', hvmn, ⟨hlv, hlc⟩ | h⟩ | ⟨hfmn, h | ⟨hlc, hnn'⟩⟩⟩ :=
       hwfs' (by lia) hm' hfmm hmm' hn' hlv
-    · rw [subst_fn_eq_of_lt hm] at hlv
+    · rw [prefix_subst.fn_eq hm] at hlv
       replace hn : n < p.size := hp hm hlv
       simp only [hn, VarMap.getElem_extend_lt] at hlc
       exact ⟨n, hn, Expr.free_of_localVar hlv,
         Or.inl ⟨hnn', Expr.free_of_localVar hlc⟩⟩
     · grind
     · grind
-    · rw [subst_fn_eq_of_lt hm] at hlc
+    · rw [prefix_subst.fn_eq hm] at hlc
       replace hn : n < p.size := hp hm hlc
       exact ⟨n, hn, Expr.free_of_localVar hlc, Or.inr ⟨hfmn, hnn'⟩⟩
   | step m' l' k' hne hs hpath ih =>
@@ -1899,25 +2436,25 @@ theorem Program.free_in_fn_of_free_in_subst {p : Program} {e : Expr}
     · replace hl : l < p.size := by grind
       replace hlf : vm[l].LocalFn l' := by grind
       replace hl' : l' < p.size := by grind
-      replace hk' : k' < p.size := lt_size_of_pathWithout_of_lt hp hl' hpath
+      replace hk' : k' < p.size := by grind
       replace hpath : l' ⟶[p, n']* k' := by grind
-      rw [subst_fn_eq_of_lt hm] at hlvm
-      rw [subst_fn_eq_of_lt hk'] at hlv
+      rw [prefix_subst.fn_eq hm] at hlvm
+      rw [prefix_subst.fn_eq hk'] at hlv
       exact ⟨l, hl, Expr.free_of_localVar hlvm,
         Or.inl ⟨hll', Expr.free_iff.mpr (Or.inr ⟨l', k', hk', hlf, hpath, hlv⟩)⟩⟩
     · replace hl' : l' < p.size := by grind
-      replace hk' : k' < p.size := lt_size_of_pathWithout_of_lt hp hl' hpath
+      replace hk' : k' < p.size := by grind
       have hn' : n' < p.size := by grind
       have hne := hpath.ne_start
-      have hnn' : fm'[n'].getD n' = n' := by
+      have hnn' : fm'[n'] = n' := by
         apply hvalid'.eq_of_not_nests
         intro n hn hvmn hnests
         refine hnnests n hn hvmn
           (.trans _ _ _ hnests (.free _ _ (by lia) (by lia) hne ?_))
         exact (free_in_fn_iff (by lia) hne).mpr ⟨_, ‹_›, hlv, hpath⟩
       replace hpath : l' ⟶[p, n']* k' := by grind
-      rw [subst_fn_eq_of_lt hm] at hlf
-      rw [subst_fn_eq_of_lt hk'] at hlv
+      rw [prefix_subst.fn_eq hm] at hlf
+      rw [prefix_subst.fn_eq hk'] at hlv
       have hne := hpath.ne_start
       replace hf : p.fn[l'].Free p n' :=
         (free_in_fn_iff hl' hne).mpr ⟨_, hk', hlv, hpath⟩
@@ -1928,7 +2465,7 @@ theorem Program.free_in_fn_of_free_in_subst {p : Program} {e : Expr}
       exact ⟨n', hn', free_in_fn_of_succ hl' hne ⟨hm, hlf⟩ hf,
         Or.inl ⟨hnn', hvmn' ▸ .var⟩⟩
     · grind
-    · rw [subst_fn_eq_of_lt hm] at hlf
+    · rw [prefix_subst.fn_eq hm] at hlf
       replace hl : l < p.size := by grind
       replace hne := hpath.ne_start
       replace hf := (free_in_fn_iff hl' hne).mpr ⟨k', hk', hlv, hpath⟩
@@ -1938,41 +2475,42 @@ theorem Program.free_in_fn_of_free_in_subst {p : Program} {e : Expr}
 theorem Expr.free_of_free_in_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
     (hvalid : p.ValidSubst vm fm) (hwf : p.WF) (hwfs : p.WFSubst vm fm)
-    (he : e.ValidRefs p) (hns : e.NoSubst fm) (hwfe : e.WFSubst p vm fm)
+    (ho : e.DeepOriginal p fm) (hwfe : e.WFSubst p vm fm)
     {n' : Nat} :
-    let ⟨p', e', fm', _, _⟩ := e.subst p vm fm
+    let ⟨p', e', fm', h⟩ := e.subst p vm fm
+    let hsize := h.pre.size_le
     e'.Free p' n' → ∃ (n : Nat) (hn : n < p.size), e.Free p n ∧
-      (fm'[n].getD n = n ∧ vm[n].Free p n' ∨ fm'[n].getD n = n' ∧ n' ≠ n) := by
+      (fm'[n] = n ∧ vm[n].Free p n' ∨ fm'[n] = n' ∧ n' ≠ n) := by
   intro hf
   let p' := (e.subst p vm fm).program
   let e' := (e.subst p vm fm).expr
   let fm' := (e.subst p vm fm).funMap
-  let hsize := (e.subst p vm fm).size_ge
-  have hfm' : fm'.Valid := FunMap.valid_subst hfm
+  let hsize := (e.subst p vm fm).props.pre.size_le
+  have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
   have hvalid' : p'.ValidSubst vm.extend fm' :=
-    Program.validSubst_subst hvm hfm hp hvalid
-  have he' : e'.ValidRefs p' := validRefs_subst hvm hfm he
+    Program.validSubst_subst hvm hfm hp hvalid ho
+  have he' : e'.ValidRefs p' := validRefs_subst hvm hfm ho
   obtain hlv | ⟨m', k', hk', hlf, hpath, hlv⟩ := free_iff.mp hf
   · have hn' : n' < p'.size := by grind
     obtain ⟨n, hn, ⟨hnn', hnnests, ⟨hlv, hl⟩ | ⟨-, -, h⟩⟩ | ⟨hfmn, h | ⟨hlv, hnn'⟩⟩⟩ :=
-      strongProvenance_subst hvm hfm hp hvalid hwf he hns hwfe hn' hlv
-    · exact ⟨n, he hlv, free_of_localVar hlv,
+      strongProvenance_subst hvm hfm hp hvalid hwf ho hwfe hn' hlv
+    · exact ⟨n, ho.validRefs hlv, free_of_localVar hlv,
         Or.inl ⟨hnn', free_of_localVar (by grind)⟩⟩
     · contradiction
     · contradiction
-    · exact ⟨n, he hlv, free_of_localVar hlv, Or.inr ⟨hfmn, hnn'⟩⟩
+    · exact ⟨n, ho.validRefs hlv, free_of_localVar hlv, Or.inr ⟨hfmn, hnn'⟩⟩
   · have hm' : m' < p'.size := by grind
     have hne := hpath.ne_start
     replace hf' := (Program.free_in_fn_iff hm' hne).mpr ⟨_, hk', hlv, hpath⟩
     obtain ⟨m, hm, ⟨hmm', hnnests, h⟩ | ⟨hfmm, h | ⟨hlf, hmm'⟩⟩⟩ :=
-      strongProvenance_subst hvm hfm hp hvalid hwf he hns hwfe hm' hlf
+      strongProvenance_subst hvm hfm hp hvalid hwf ho hwfe hm' hlf
     · replace hm : m < p.size := by grind
       replace hm' : m' < p.size := by grind
       obtain ⟨hlv, hlc⟩ | ⟨hlf, rfl, -⟩ := h
       · refine ⟨m, hm, free_of_localVar hlv, Or.inl ⟨hmm', ?_⟩⟩
         exact free_of_localFn_of_free hm' hne (by grind) (by grind)
       · have hn' : n' < p.size := by grind
-        have hnn' : fm'[n'].getD n' = n' := by
+        have hnn' : fm'[n'] = n' := by
           apply hvalid'.eq_of_not_nests
           intro n hn hvmn hnests
           refine hnnests n hn hvmn
@@ -1987,7 +2525,7 @@ theorem Expr.free_of_free_in_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     · contradiction
     · replace hm : m < p.size := by grind
       obtain ⟨n, hn, hf, h⟩ :=
-        Program.free_in_fn_of_free_in_subst hvm hfm hp hvalid hwf hwfs he hwfe
+        Program.free_in_fn_of_free_in_subst hvm hfm hp hvalid hwf hwfs ho hwfe
         hm hm' hfmm hmm' hne hf'
       exact ⟨n, hn, free_of_localFn_of_free hm (by grind) hlf hf, h⟩
 
@@ -2000,9 +2538,10 @@ theorem Computation.free_of_free_in_subst {c : Computation} {n m : Nat}
   dsimp only at *
   let vm := VarMap.mk p.size n v
   let fm := FunMap.mk p.size
-  let hvm : vm.Valid fm := VarMap.valid_mk hv
-  let hfm : fm.Valid := FunMap.valid_mk
-  let hvalid : p.ValidSubst vm fm := Program.validSubst_mk hwf
+  have hvm : vm.Valid fm := VarMap.valid_mk hv
+  have hfm : fm.Valid := FunMap.valid_mk
+  have hvalid : p.ValidSubst vm fm := Program.validSubst_mk hwf
+  have ho := Expr.deepOriginal_mk hp he
   have hnnests : ∀ k, e.Free p k → n ⊁[p] k := by
     intro k hf hnests
     cases hwfe _ hf with
@@ -2014,14 +2553,13 @@ theorem Computation.free_of_free_in_subst {c : Computation} {n m : Nat}
       intro rfl
       exact hnnests _ hf hnests
     simp [VarMap.mk, vm, *] at h
-  let p' := (e.subst p (VarMap.mk _ n v) (FunMap.mk _)).program
-  let fm' := (e.subst p (VarMap.mk _ n v) (FunMap.mk _)).funMap
-  let hsize := (e.subst p (VarMap.mk _ n v) (FunMap.mk _)).size_ge
+  let p' := (e.subst p vm fm).program
+  let fm' := (e.subst p vm fm).funMap
+  let hsize := (e.subst p vm fm).props.pre.size_le
   have hvalid' : p'.ValidSubst vm.extend fm' :=
-    Program.validSubst_subst hvm hfm hp hvalid
+    Program.validSubst_subst hvm hfm hp hvalid ho
   obtain ⟨k, hk, hf, ⟨hkk', hf'⟩ | ⟨hfmk, hne⟩⟩ :=
-    Expr.free_of_free_in_subst hvm hfm hp hvalid hwf Program.wfSubst_mk he
-    Expr.noSubst_mk hwfs hf
+    Expr.free_of_free_in_subst hvm hfm hp hvalid hwf Program.wfSubst_mk ho hwfs hf
   · by_cases n = k
     · subst k
       simp only [VarMap.mk, Vector.getElem_setIfInBounds_self, vm] at hf'
@@ -2029,7 +2567,7 @@ theorem Computation.free_of_free_in_subst {c : Computation} {n m : Nat}
     · simp [VarMap.mk, vm, *] at hf'
       have .var := hf'
       exact Or.inl ⟨hf, ‹n ≠ m›.symm⟩
-  · have hkk' : fm'[k].getD k = k := by
+  · have hkk' : fm'[k] = k := by
       apply hvalid'.eq_of_not_nests
       intro l hl hvml hnests
       obtain rfl : n = l := by grind
@@ -2047,10 +2585,11 @@ theorem Computation.subst_types {c : Computation} {t : Ty} {n : Nat} {v : Expr}
   · exact FunMap.mk_types
 
 theorem Computation.subst_wf {c : Computation} {n : Nat} {v : Expr}
-    (hp : c.ValidRefs) (hv : v.ValidRefs c.toProgram) (h : c.WF) :
+    (hp : c.ValidRefs) (he : c.expr.ValidRefs c.toProgram)
+    (hv : v.ValidRefs c.toProgram) (h : c.WF) :
     (c.subst n v).WF :=
   Program.subst_wf (VarMap.valid_mk hv) FunMap.valid_mk hp
-    (Program.validSubst_mk h) h
+    (Program.validSubst_mk h) (Expr.deepOriginal_mk hp he) h
 
 /--
 Substitution preserves types and well-formedness.
@@ -2058,6 +2597,7 @@ Substitution preserves types and well-formedness.
 Corresponds to Lemma 3 in the paper.
 -/
 theorem Computation.subst_types_and_wf {c : Computation} {n : Nat} {v : Expr}
-    (hn : n < c.size) (ht : ⊢ c : t) (hv : c.toProgram ⊢ v : c.ty[n])
+    {t : Ty} (hn : n < c.size) (ht : ⊢ c : t) (hv : c.toProgram ⊢ v : c.ty[n])
     (hwf : c.WF) : ⊢ c.subst n v : t ∧ (c.subst n v).WF :=
-  ⟨subst_types hn ht hv, subst_wf ht.program_types.validRefs hv.validRefs hwf⟩
+  ⟨subst_types hn ht hv,
+    subst_wf ht.program_types.validRefs ht.expr_types.validRefs hv.validRefs hwf⟩
