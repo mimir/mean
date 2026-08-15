@@ -1,3 +1,7 @@
+module
+
+public section
+
 /-- The type of an expression. -/
 inductive Ty where
   | bot                 -- the uninhabited bottom type
@@ -60,7 +64,7 @@ inductive Const where
   | logic (f : Logic)
 
 /-- Returns the type of a constant. -/
-@[grind unfold]
+@[expose, grind unfold]
 def Const.ty : Const → Ty
   | unit => .unit
   | bool _ => .bool
@@ -99,19 +103,19 @@ abbrev Expr.app (f e : Expr) : Expr := f.bin .app e
 
 abbrev Expr.pair (e₁ e₂ : Expr) : Expr := e₁.bin .pair e₂
 
-@[coe, grind unfold]
+@[expose, coe, grind unfold]
 def Expr.ofBool (b : Bool) : Expr := .const (.bool b)
 
-@[coe, grind unfold]
+@[expose, coe, grind unfold]
 def Expr.ofInt (x : Int) : Expr := .const (.int x)
 
-@[coe, grind unfold]
+@[expose, coe, grind unfold]
 def Expr.ofOp (f : Op) : Expr := .const (.op f)
 
-@[coe, grind unfold]
+@[expose, coe, grind unfold]
 def Expr.ofCmp (f : Cmp) : Expr := .const (.cmp f)
 
-@[coe, grind unfold]
+@[expose, coe, grind unfold]
 def Expr.ofLogic (f : Logic) : Expr := .const (.logic f)
 
 instance : Coe Bool Expr := ⟨Expr.ofBool⟩
@@ -218,6 +222,7 @@ The typing predicate for programs.
 
 A program is well-typed if all function bodies are well-typed.
 -/
+@[expose]
 def Program.Types (p : Program) : Prop :=
   ∀ ⦃n⦄ (_ : n < p.size), p ⊢ p.fn[n] : p.ret[n]
 
@@ -264,6 +269,7 @@ abbrev Expr.LocalVar (e : Expr) (n : Nat) : Prop := e.Local n .var
 abbrev Expr.LocalFn (e : Expr) (n : Nat) : Prop := e.Local n .fn
 
 /-- All references in an expression are less than `n`. -/
+@[expose]
 def Expr.Bounded (e : Expr) (n : Nat) : Prop :=
   ∀ ⦃m : Nat⦄ ⦃r : RefKind⦄, e.Local m r → m < n
 
@@ -297,6 +303,7 @@ All references in the program's function bodies are in bounds of the program.
 
 This property holds for any well-typed program.
 -/
+@[expose]
 def Program.ValidRefs (p : Program) : Prop :=
   ∀ ⦃i⦄ (_ : i < p.size), p.fn[i].ValidRefs p
 
@@ -559,3 +566,5 @@ theorem Program.validRefs_setBody {p : Program} {i : Nat} {b : Expr}
   · simp [*]
   · simp only [ne_eq, not_false_eq_true, Vector.getElem_set_ne, *]
     exact Expr.bounded_of_ge (by simp) (h hj)
+
+end
