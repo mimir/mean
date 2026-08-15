@@ -1,7 +1,9 @@
-import LambdaGraph.Subst
+module
+
+public import LambdaGraph.Subst
 
 /-- The small-step reduction relation. -/
-inductive Computation.Step : Computation → Computation → Prop where
+public inductive Computation.Step : Computation → Computation → Prop where
   | appFn (p : Program) (n : Nat) (e : Expr) (_ : n < p.size) :
     e.Value → Step ⟨p, .app (.fn n) e⟩ (.subst ⟨p, p.fn[n]⟩ n e)
   | appOp (p : Program) (f : Op) (x y : Int) :
@@ -30,7 +32,7 @@ inductive Computation.Step : Computation → Computation → Prop where
 notation:40 c:41 " ⇒ " c':41 => Computation.Step c c'
 
 /-- The reflexive-transitive closure of the reduction relation. -/
-inductive Computation.Steps : Computation → Computation → Prop where
+public inductive Computation.Steps : Computation → Computation → Prop where
   | refl (c : Computation) : Steps c c
   | step (c c' c'' : Computation) : Step c c' → Steps c' c'' → Steps c c''
 
@@ -40,25 +42,25 @@ namespace Computation
 
 theorem size_le_of_step {c c' : Computation} (h : c ⇒ c') :
     c.size ≤ c'.size := by
-  induction h with grind [subst]
+  induction h with grind
 
 theorem lt_size_of_step {c c' : Computation} {n : Nat} (hn : n < c.size)
     (h : c ⇒ c') : n < c'.size := Nat.lt_of_lt_of_le hn (size_le_of_step h)
 
 theorem fn_eq_of_step {c c' : Computation} (h : c ⇒ c') {n : Nat}
     (hn : n < c.size) : c'.fn[n]'(lt_size_of_step hn h) = c.fn[n] := by
-  induction h with simp [subst, Program.prefix_subst.fn_eq hn, *]
+  induction h with grind
 
 theorem ty_eq_of_step {c c' : Computation} (h : c ⇒ c') {n : Nat}
     (hn : n < c.size) : c'.ty[n]'(lt_size_of_step hn h) = c.ty[n] := by
-  induction h with simp [subst, Program.prefix_subst.ty_eq hn, *]
+  induction h with grind
 
 theorem ret_eq_of_step {c c' : Computation} (h : c ⇒ c') {n : Nat}
     (hn : n < c.size) : c'.ret[n]'(lt_size_of_step hn h) = c.ret[n] := by
-  induction h with simp [subst, Program.prefix_subst.ret_eq hn, *]
+  induction h with grind
 
 @[grind →]
-theorem prefix_of_step {c c' : Computation} (h : c ⇒ c') :
+public theorem prefix_of_step {c c' : Computation} (h : c ⇒ c') :
     c.Prefix c'.toProgram := by
   constructor
   · exact fn_eq_of_step h
@@ -67,6 +69,8 @@ theorem prefix_of_step {c c' : Computation} (h : c ⇒ c') :
   · exact size_le_of_step h
 
 end Computation
+
+public section
 
 /-- The progress theorem. Corresponds to Theorem 2 in the paper. -/
 theorem Computation.progress {c : Computation} {t : Ty}
@@ -194,3 +198,5 @@ theorem Computation.soundness {c c' : Computation} {t : Ty} (ht : ⊢ c : t)
     c'.expr.Value ∨ ∃ c'', c' ⇒ c'' :=
   progress (preservation_steps ht hwf hs).1.expr_types
     (preservation_closed_steps ht hwf hs hc)
+
+end

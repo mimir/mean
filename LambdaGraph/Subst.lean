@@ -1,5 +1,7 @@
-import LambdaGraph.SubstMaps
-import LambdaGraph.Nest
+module
+
+import all LambdaGraph.SubstMaps
+public import LambdaGraph.Nest
 
 @[grind]
 structure SubstProps (p p' : Program) (e e' : Expr) (vm : VarMap p.size)
@@ -108,7 +110,7 @@ decreasing_by
   all_goals grind
 
 /-- Substitutes a value for a variable in a computation. -/
-noncomputable def Computation.subst (p : Computation) (n : Nat) (v : Expr) :
+public noncomputable def Computation.subst (p : Computation) (n : Nat) (v : Expr) :
     Computation :=
   let ⟨p', e', _, _⟩ := p.expr.subst p.toProgram (.mk _ n v) (.mk _)
   ⟨p', e'⟩
@@ -118,6 +120,11 @@ theorem Program.prefix_subst {p : Program} {e : Expr} {vm : VarMap p.size}
   (e.subst p vm fm).props.pre
 
 grind_pattern Program.prefix_subst => (e.subst p vm fm).program
+
+public theorem Computation.prefix_subst {c : Computation} {n : Nat} {v : Expr} :
+    c.Prefix (c.subst n v).toProgram := Program.prefix_subst
+
+grind_pattern Computation.prefix_subst => c.subst n v
 
 theorem FunMap.subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hfm : fm.Types p) :
@@ -1688,6 +1695,8 @@ theorem Expr.free_of_free_in_subst {p : Program} {e : Expr} {vm : VarMap p.size}
         hm hm' hfmm hmm' hne hf'
       exact ⟨n, hn, free_of_localFn_of_free hm (by grind) hlf hf, h⟩
 
+public section
+
 theorem Computation.free_of_free_in_subst {c : Computation} {n m : Nat}
     {v : Expr} (hp : c.ValidRefs) (he : c.expr.ValidRefs c.toProgram)
     (hv : v.ValidRefs c.toProgram) (hwf : c.WF)
@@ -1760,3 +1769,5 @@ theorem Computation.subst_types_and_wf {c : Computation} {n : Nat} {v : Expr}
     (hwf : c.WF) : ⊢ c.subst n v : t ∧ (c.subst n v).WF :=
   ⟨subst_types hn ht hv,
     subst_wf ht.program_types.validRefs ht.expr_types.validRefs hv.validRefs hwf⟩
+
+end

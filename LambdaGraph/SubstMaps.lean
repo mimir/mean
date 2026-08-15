@@ -1,4 +1,8 @@
-import LambdaGraph.Basic
+module
+
+public import LambdaGraph.Basic
+
+public section
 
 /--
 A map specifying how variables should be substituted.
@@ -195,6 +199,8 @@ theorem update_types {p : Program} {fm : FunMap p.size} {b : Expr} {m : Nat}
   grind [update, Types]
 
 end FunMap
+
+end
 
 def Program.UsesFn (p : Program) (m : Nat) : Prop :=
   ∃ (i : Nat) (_ : i < p.size), p.fn[i].LocalFn m
@@ -472,7 +478,7 @@ instance : EmptyCollection Finset := ⟨fun _ => False, 0, by simp⟩
 instance : Singleton Nat Finset where
   singleton n := ⟨fun m => m = n, n + 1, by lia⟩
 
-protected def Finset.insert (s : Finset) (n : Nat) : Finset where
+def Finset.insert (s : Finset) (n : Nat) : Finset where
   mem := fun m => m = n ∨ s.mem m
   bound := (n + 1).max s.bound
   not_mem_of_ge_bound := by grind [not_mem_of_ge_bound]
@@ -518,13 +524,13 @@ theorem Finset.notMem_emptyCollection {n : Nat} : n ∉ (∅ : Finset) := by
   simp [Membership.mem, EmptyCollection.emptyCollection]
 
 @[simp, grind =]
-theorem Finset.singleton_eq_insert {n : Nat} : {n} = insert n (∅ : Finset) := by
-  simp [EmptyCollection.emptyCollection, Singleton.singleton, insert, Finset.insert]
+theorem Finset.singleton_eq_insert {n : Nat} : {n} = Insert.insert n (∅ : Finset) := by
+  simp [EmptyCollection.emptyCollection, Singleton.singleton, Insert.insert, Finset.insert]
 
 @[simp, grind =]
 theorem Finset.mem_insert_iff {s : Finset} {m n : Nat} :
-    n ∈ insert m s ↔ n = m ∨ n ∈ s := by
-  simp [Membership.mem, insert, Finset.insert]
+    n ∈ Insert.insert m s ↔ n = m ∨ n ∈ s := by
+  simp [Membership.mem, Insert.insert, Finset.insert]
 
 @[simp, grind =]
 theorem Finset.mem_union_iff {s₁ s₂ : Finset} {n : Nat} :
@@ -562,17 +568,17 @@ theorem Finset.size_withBound {s : Finset} {b : Nat} (h : ∀ n ≥ b, n ∉ s) 
   grind [size]
 
 theorem Finset.size_insert {s : Finset} {n : Nat} (h : n ∉ s) :
-    (insert n s).size = s.size + 1 := by
+    (Insert.insert n s).size = s.size + 1 := by
   let b := (n + 1).max s.bound
   have hb : ∀ m ≥ b, m ∉ s := by grind [notMem_of_ge_bound]
   rw [← size_withBound hb]
   suffices ∀ i hi,
-      size.aux (insert n s) i hi =
+      size.aux (Insert.insert n s) i hi =
         size.aux (s.withBound b hb) i hi + if n < i then 1 else 0 by
     have := this b (Nat.le_refl _)
     simpa [show n < b by grind]
   intro i hi
-  fun_induction size.aux (insert n s) i hi with grind [size.aux]
+  fun_induction size.aux (Insert.insert n s) i hi with grind [size.aux]
 
 @[grind →]
 theorem Finset.size_le_size {s₁ s₂ : Finset} (h : s₁ ⊆ s₂) :
@@ -592,7 +598,7 @@ theorem Finset.size_lt_size {s₁ s₂ : Finset} (h : s₁ ⊂ s₂) :
   simp only [Subset, Classical.not_forall] at hex
   obtain ⟨n, h₂, h₁⟩ := hex
   calc s₁.size
-    _ < (insert n s₁).size := by
+    _ < (Insert.insert n s₁).size := by
       rw [size_insert h₁]
       exact Nat.lt_succ_self _
     _ ≤ s₂.size := by

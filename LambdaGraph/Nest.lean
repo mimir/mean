@@ -1,4 +1,8 @@
-import LambdaGraph.Basic
+module
+
+public import LambdaGraph.Basic
+
+public section
 
 /--
 The free-variable relation.
@@ -58,6 +62,7 @@ The successor relation between functions.
 A function is a successor (in the CFG) of another function if it occurs in that
 function's body (loops are permitted).
 -/
+@[expose]
 def Program.Succ (p : Program) (m n : Nat) :=
   ∃ (_ : m < p.size), p.fn[m].LocalFn n
 
@@ -84,6 +89,7 @@ This relation can also be read as post-dominance with end `k`.
 def Program.Dominates (p : Program) (m n k : Nat) : Prop := ¬m ⟶[p, n]* k
 
 /-- An expression is closed if it has no free variables. -/
+@[expose]
 def Expr.Closed (p : Program) (e : Expr) : Prop := ∀ ⦃n⦄, ¬e.Free p n
 
 /--
@@ -93,6 +99,7 @@ This corresponds to Property 2 from the paper, but is formulated in terms of the
 strict nesting relation instead. The theorem `Program.wf_iff` shows that the two
 definitions are equivalent.
 -/
+@[expose]
 def Program.WF (p : Program) : Prop := ∀ ⦃n⦄, n ⊁[p] n
 
 /--
@@ -101,9 +108,11 @@ Free variables of a computation.
 A variable occurs free in a computation if it occurs free in the computation's
 expression.
 -/
+@[expose]
 def Computation.Free (c : Computation) (n : Nat) := c.expr.Free c.toProgram n
 
 /-- A computation is closed if its expression is closed in its program. -/
+@[expose]
 def Computation.Closed (c : Computation) : Prop := c.expr.Closed c.toProgram
 
 @[simp, grind .]
@@ -483,3 +492,5 @@ theorem Program.dominates_of_nestsEq {p : Program} {m n k : Nat}
   | .refl _, _ => fun h => nomatch h.ne_start
   | _, .refl _ => fun h => nomatch h.ne_end
   | .nests _ h₁, .nests _ h₂ => dominates_of_nests hwf h₁ h₂
+
+end
