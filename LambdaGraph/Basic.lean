@@ -518,6 +518,12 @@ theorem Program.prefix_push {p : Program} {b : Expr} {t₁ t₂ : Ty} :
     p.Prefix (p.push b t₁ t₂) := by
   constructor <;> simp_all
 
+@[grind .]
+theorem Program.prefix_setBody {p p' : Program} {i : Nat} {b : Expr}
+    (hi : p.size ≤ i) (hi' : i < p'.size) (h : p.Prefix p') :
+    p.Prefix (p'.setBody i b hi') := by
+  constructor <;> grind
+
 theorem Expr.types_in_prefix_iff {p p' : Program} {e : Expr} {t : Ty}
     (he : e.ValidRefs p) (h : p.Prefix p') : p' ⊢ e : t ↔ p ⊢ e : t := by
   constructor <;> intro ht <;> induction ht with grind [intro Types]
