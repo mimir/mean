@@ -25,6 +25,10 @@ def VarMap.update {n : Nat} (vm : VarMap n) (m : Nat)
 def VarMap.extend {n n' : Nat} (v : VarMap n) : VarMap n' :=
   Vector.ofFn (fun m => if _ : ↑m < n then v[↑m] else .var ↑m)
 
+/-- A predicate representing the domain of a variable map. -/
+def VarMap.Dom {n : Nat} (vm : VarMap n) (m : Nat) : Prop :=
+  ∃ hm, vm[m]'hm ≠ .var m
+
 /--
 The typing predicate for variable maps.
 
@@ -92,6 +96,24 @@ theorem extend_extend {m n k : Nat} {vm : VarMap m} (h : m ≤ n) :
   · have : ¬i < m := by lia
     simp [extend, *]
 
+@[grind →]
+theorem Dom.lt {n : Nat} {vm : VarMap n} {m : Nat} (h : vm.Dom m) : m < n := h.1
+
+@[grind →]
+theorem eq_of_dom_mk {n m : Nat} {v : Expr} {k : Nat} (h : (mk n m v).Dom k) :
+    m = k := by
+  grind [Dom]
+
+@[grind =]
+theorem dom_update_iff {n : Nat} {vm : VarMap n} {m k : Nat} (hm : m < n) :
+    (vm.update m hm).Dom k ↔ vm.Dom k ∨ m = k := by
+  grind [Dom]
+
+@[grind =]
+theorem dom_extend_iff {n n' : Nat} {vm : VarMap n} {m : Nat} (hle : n ≤ n') :
+    (vm.extend (n' := n')).Dom m ↔ vm.Dom m := by
+  grind [Dom]
+
 theorem mk_types {p : Program} {n : Nat} {v : Expr} (hn : n < p.size)
     (h : p ⊢ v : p.ty[n]) : (mk _ n v).Types p := by
   intro m hm
@@ -150,6 +172,10 @@ def FunMap.update {n : Nat} (fm : FunMap n) (m : Nat)
     (h : m < n := by get_elem_tactic) : FunMap (n + 1) :=
   fm.set m n |>.push n
 
+/-- A predicate representing the domain of a function map. -/
+def FunMap.Dom {n : Nat} (fm : FunMap n) (m : Nat) : Prop :=
+  ∃ hm, fm[m]'hm ≠ m
+
 /--
 The typing predicate for function maps.
 
@@ -187,6 +213,18 @@ theorem getElem_update {n : Nat} {fm : FunMap n} {m i : Nat} (hm : m < n)
     replace hi : i < n := by lia
     have : m ≠ i := by simp_all
     simp_all
+
+@[grind →]
+theorem Dom.lt {n : Nat} {fm : FunMap n} {m : Nat} (h : fm.Dom m) : m < n := h.1
+
+@[grind .]
+theorem not_dom_mk {n m : Nat} : ¬(mk n).Dom m := by
+  grind [Dom]
+
+@[grind =]
+theorem dom_update_iff {n : Nat} {fm : FunMap n} {m k : Nat} (hm : m < n) :
+    (fm.update m hm).Dom k ↔ fm.Dom k ∨ m = k := by
+  grind [Dom]
 
 theorem mk_types {p : Program} : (mk _).Types p := by
   intro m hm

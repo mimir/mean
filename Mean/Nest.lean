@@ -115,6 +115,24 @@ def Computation.Free (c : Computation) (n : Nat) := c.expr.Free c.toProgram n
 @[expose]
 def Computation.Closed (c : Computation) : Prop := c.expr.Closed c.toProgram
 
+@[simp, grind =]
+theorem Expr.free_in_var_iff {p : Program} {m n : Nat} :
+    (var m).Free p n ↔ n = m := by
+  constructor <;> intro h
+  · have .var := h
+    rfl
+  · exact h ▸ .var
+
+@[simp, grind =]
+theorem Expr.free_in_fn_iff {p : Program} {m n : Nat} :
+    (fn m).Free p n ↔ ∃ hm, n ≠ m ∧ (p.fn[m]'hm).Free p n := by
+  constructor
+  · intro h
+    replace .fn _ hm hne h := h
+    exact ⟨hm, hne, h⟩
+  · rintro ⟨hm, hne, h⟩
+    exact .fn m hm hne h
+
 @[simp, grind .]
 theorem Expr.not_free_in_const {p : Program} {c : Const} {n : Nat} :
     ¬(const c).Free p n := nofun
