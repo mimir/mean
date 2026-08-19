@@ -41,7 +41,7 @@ no reason such a procedure could not be implemented).
 -/
 noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
     (fm : FunMap p.size) : SubstResult p e vm fm :=
-  if ∀ n, e.Free p n → ¬vm.Dom n then
+  if hf : ∀ n, e.Free p n → ¬vm.Dom n then
     -- The expression does not contain a free substitution variable, so there is
     -- nothing to do.
     ⟨p, e, fm, by rfl, by simp, by simp, by simp⟩
@@ -50,39 +50,33 @@ noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
     | var m =>
       ⟨p, vm[m]?.getD (var m), fm, by rfl, by simp, by grind, by simp⟩
     | fn m =>
-      if hm : m < p.size then
-        if hfmm : fm.Dom m then
-          -- There is already a substitution for this function, we can reuse it.
-          ⟨p, fn fm[m], fm, by rfl, by simp, by grind, by simp⟩
-        else
-          -- There is not yet a substitution for this function, so we have to
-          -- create a new one.
-          let m' := p.size
-          let vm₁ := vm.update m
-          let fm₁ := fm.update m
-          -- Add a new function with a temporary body that is always well-typed.
-          let p₁ := p.push (recurse m') p.ty[m] p.ret[m]
-          -- Substitute the body to obtain the body for the new function.
-          let ⟨p₂, f', fm₂, h⟩ := p.fn[m].subst p₁ vm₁ fm₁
-          -- Now put the final function body in place.
-          let p₃ := p₂.setBody m' f'
-          let e' := fn m'
-          ⟨p₃, e', fm₂, by
-            refine ⟨?_, ?_, ?_, ?_⟩
-            · constructor <;> grind
-            · have hop' : OccursProvenance p p₂ vm vm₁.extend fm fm₂ := by
-                grind [Occurs, OccursProvenance, Program.UsesFn]
-              grind [Occurs, OccursProvenance, Program.UsesFn]
-            · grind [ExprProvenance]
-            · grind [FunMap.Dom]
-          ⟩
+      have hm : m < p.size := by grind
+      if hfmm : fm.Dom m then
+        -- There is already a substitution for this function, we can reuse it.
+        ⟨p, fn fm[m], fm, by rfl, by simp, by grind, by simp⟩
       else
-        -- This case is actually impossible, nonexistent functions don't have
-        -- free variables.
-        ⟨p, fn m, fm, by rfl, by simp, by simp, by simp⟩
-    | const c =>
-      -- This case is actually impossible, constants don't have free variables.
-      ⟨p, const c, fm, by rfl, by simp, by simp, by simp⟩
+        -- There is not yet a substitution for this function, so we have to
+        -- create a new one.
+        let m' := p.size
+        let vm₁ := vm.update m
+        let fm₁ := fm.update m
+        -- Add a new function with a temporary body that is always well-typed.
+        let p₁ := p.push (recurse m') p.ty[m] p.ret[m]
+        -- Substitute the body to obtain the body for the new function.
+        let ⟨p₂, f', fm₂, h⟩ := p.fn[m].subst p₁ vm₁ fm₁
+        -- Now put the final function body in place.
+        let p₃ := p₂.setBody m' f'
+        let e' := fn m'
+        ⟨p₃, e', fm₂, by
+          refine ⟨?_, ?_, ?_, ?_⟩
+          · constructor <;> grind
+          · have hop' : OccursProvenance p p₂ vm vm₁.extend fm fm₂ := by
+              grind [Occurs, OccursProvenance, Program.UsesFn]
+            grind [Occurs, OccursProvenance, Program.UsesFn]
+          · grind [ExprProvenance]
+          · grind [FunMap.Dom]
+        ⟩
+    | const c => by simp at hf
     | bin k e₁ e₂ =>
       let ⟨p₁, e₁', fm₁, h₁⟩ := e₁.subst p vm fm
       let ⟨p₂, e₂', fm₂, h₂⟩ := e₂.subst p₁ vm.extend fm₁
@@ -134,7 +128,7 @@ theorem FunMap.subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
     fm'.Types p' := by
   dsimp only
   fun_induction Expr.subst <;> try grind
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' hf ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' ih =>
     rw [hs₂] at ih
     dsimp only at ih
     exact ih <| update_types hm hfm
@@ -156,7 +150,7 @@ theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
     obtain ⟨_, hty, hret⟩ := hfm _ ‹m < p.size›
     rw [hty, hret]
     constructor
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' hf ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' ih =>
     rw [hs₂] at ih
     dsimp only at ih
     have .fn _ _ := ht
@@ -166,8 +160,6 @@ theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
     have hret : p.ret[m] = p₃.ret[p.size] := by grind [Program.prefix_subst.ret_eq]
     rw [hty, hret]
     constructor
-  next => exact ht
-  next => exact ht
   next =>
     cases ht with
     | app _ _ t₁ t₂ htf hte =>
@@ -179,7 +171,7 @@ theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
     have .cond _ _ _ _ htc htet htef := ht
     constructor <;>
       grind [VarMap.extend_types, FunMap.subst_types]
-  next p vm fm e i p' e' fm' h hs hf ih =>
+  next p vm fm e i hf p' e' fm' h hs ih =>
     rw [hs] at ih
     cases ht with
     | proj0 _ _ t' ht =>
@@ -195,7 +187,7 @@ theorem Program.subst_types {p : Program} {e : Expr} {vm : VarMap p.size}
   fun_induction Expr.subst <;>
     first | grind [VarMap.extend_types, FunMap.subst_types]
           | dsimp only at *
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' hf ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' ih =>
     have heq : p.ret[m] = (p.push (.recurse m') p.ty[m] p.ret[m]).ret[m'] := by
       simp [m']
     have ht₁ : ⊢ p₁ := by
@@ -516,7 +508,7 @@ theorem FunMap.extends_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     (e.subst p vm fm).funMap.Extends fm := by
   fun_induction Expr.subst <;>
     try solve_by_elim [extends_self]
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' ih =>
     rw [hs₂] at ih
     dsimp only at ih ⊢
     have hext := extends_update hm hfm (by grind) hfmm
@@ -526,7 +518,7 @@ theorem FunMap.extends_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     · apply ih
       · exact valid_update hm hom hfm
       · exact Expr.deepOriginal_of_extends Program.prefix_push hext ho
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ h ih₁ ih₂ =>
+  next p vm fm k e₁ e₂ hf p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ ih₁ ih₂ =>
     rw [hs₁] at ih₁
     rw [hs₂] at ih₂
     dsimp only at ih₁ ih₂ ⊢
@@ -534,8 +526,8 @@ theorem FunMap.extends_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     have hext₁ := ih₁ hfm ho₁
     have hext₂ := ih₂ hext₁.valid (Expr.deepOriginal_of_extends h₁.pre hext₁ ho₂)
     exact extends_trans hext₁ hext₂
-  next p vm fm c et ef p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃ hs₃
-      hf ihc ihet ihef =>
+  next p vm fm c et ef hf p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃
+      hs₃ ihc ihet ihef =>
     rw [hs₁] at ihc
     rw [hs₂] at ihet
     rw [hs₃] at ihef
@@ -547,7 +539,7 @@ theorem FunMap.extends_subst {p : Program} {e : Expr} {vm : VarMap p.size}
       ihet hext₁.valid (Expr.deepOriginal_of_extends h₁.pre hext₁ hoet)
     exact extends_trans hext₂ <|
       ihef hext₂.valid (Expr.deepOriginal_of_extends hpre₂ hext₂ hoef)
-  next p vm fm e i p' e' fm' h hs hf ih =>
+  next p vm fm e i hf p' e' fm' h hs ih =>
     rw [hs] at ih
     dsimp at ih ⊢
     exact ih hfm (Expr.deepOriginal_proj_iff.mp ho)
@@ -599,7 +591,7 @@ theorem VarMap.valid_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     (ho : e.DeepOriginal p fm) :
     vm.extend.Valid (e.subst p vm fm).funMap := by
   fun_induction Expr.subst <;> try grind
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' h ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ f'' ih =>
     rw [hs₂] at ih
     dsimp only at ih
     obtain ⟨hom, hm, ho⟩ := Expr.deepOriginal_fn_iff.mp ho
@@ -672,7 +664,7 @@ theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
   next p vm fm m hm hfmm hf =>
     intro n r hfmn hl
     grind [hfm.inj]
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' ih =>
     rw [hs₂] at ih
     dsimp only at ih ⊢
     have hext₁ : fm₁.Extends fm := by grind
@@ -686,9 +678,7 @@ theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     have : fm₂[m] = m' := by grind
     rw [← this] at hmn'
     grind [hfm₂.inj (by grind) hfmn hmn']
-  next => grind
-  next p vm fm b h => simp [FunMap.LocalProvenance]
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ h ih₁ ih₂ =>
+  next p vm fm k e₁ e₂ hf p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ ih₁ ih₂ =>
     rw [hs₁] at ih₁
     rw [hs₂] at ih₂
     dsimp only at *
@@ -708,8 +698,8 @@ theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
       grind
     · have := he' hfmn hl
       grind
-  next p vm fm c et ef p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃ hs₃
-      hf ihc ihet ihef =>
+  next p vm fm c et ef hf p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃
+      hs₃ ihc ihet ihef =>
     rw [hs₁] at ihc
     rw [hs₂] at ihet
     rw [hs₃] at ihef
@@ -741,7 +731,7 @@ theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
       grind
     · have := hef' hfmn hl
       grind
-  next p vm fm e i p' e' fm' h hs hf ih =>
+  next p vm fm e i hf p' e' fm' h hs ih =>
     rw [hs] at ih
     dsimp only at ih ⊢
     intro n r hfmn hl
@@ -752,7 +742,7 @@ theorem Program.validRefs_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
     (ho : e.DeepOriginal p fm) : (e.subst p vm fm).program.ValidRefs := by
   fun_induction Expr.subst <;> try simpa using hp
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' ih =>
     rw [hs₂] at ih
     dsimp only at ih ⊢
     have hvm₁ : vm₁.Valid fm₁ := VarMap.valid_update hm hvm hfm
@@ -807,7 +797,7 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     let ⟨p', _, fm', _⟩ := e.subst p vm fm
     p'.ValidSubst vm.extend fm' := by
   fun_induction Expr.subst <;> try simpa using hvalid
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' ih =>
     rw [hs₂] at ih
     dsimp only at ih
     simp only [Classical.not_forall, Classical.not_not] at hf
@@ -1175,25 +1165,18 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
     · refine ⟨m, hm, Or.inl ⟨hfmk, ?_, Or.inl ⟨.var, by grind⟩⟩⟩
       intro l hvml hnests
       exact hfmk <| hvalid.dom_of_nests (by grind) hnests hvmm
-  next p vm fm m hm hfmm hf =>
+  next p vm fm m hf hm hfmm =>
     intro n r hn hl
     simp only [local_fn_iff] at hl
     obtain ⟨rfl, rfl⟩ := hl
     exact ⟨m, hm, Or.inr ⟨rfl, Or.inr ⟨.fn, hfmm⟩⟩⟩
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' ih =>
     intro m'' r hm' hl
     simp only [Expr.local_fn_iff, e'] at hl
     obtain ⟨hr, rfl⟩ := hl
     have hext : fm₂.Extends fm₁ := by grind [FunMap.valid_update]
     exact ⟨m, by lia, Or.inr (by grind [hext.eq])⟩
-  next p vm fm m hm h =>
-    intro m' r hm' hl
-    simp only [local_fn_iff] at hl
-    lia
-  next p vm fm c h =>
-    intro m' r hm' hl
-    simp at hl
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ h ih₁ ih₂ =>
+  next p vm fm k e₁ e₂ hf p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ ih₁ ih₂ =>
     rw [hs₁] at ih₁
     rw [hs₂] at ih₂
     dsimp only at *
@@ -1213,8 +1196,8 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
       · contradiction
       · exact ⟨m, by grind, Or.inr ⟨by grind, Or.inr ⟨hl, by grind⟩⟩⟩
     exact FunMap.strongProvenance_bin he₁' he₂'
-  next p vm fm c et ef p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃ hs₃
-      hf ihc ihet ihef =>
+  next p vm fm c et ef hf p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃
+      hs₃ ihc ihet ihef =>
     rw [hs₁] at ihc
     rw [hs₂] at ihet
     rw [hs₃] at ihef
@@ -1249,7 +1232,7 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
       · contradiction
       · exact ⟨m, by grind, Or.inr ⟨by grind, Or.inr ⟨hl, by grind⟩⟩⟩
     exact FunMap.strongProvenance_cond hc' het' hef'
-  next p vm fm e i p' e' fm' h hs hf ih =>
+  next p vm fm e i hf p' e' fm' h hs ih =>
     rw [hs] at ih
     apply FunMap.strongProvenance_proj
     grind
@@ -1318,7 +1301,7 @@ theorem Program.wfSubst_subst {p : Program} {e : Expr}
     let ⟨p', _, fm', _⟩ := e.subst p vm fm
     p'.WFSubst vm.extend fm' := by
   fun_induction Expr.subst <;> try simpa using hwfs
-  next p vm fm m hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' hf ih =>
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' ih =>
     rw [hs₂] at ih
     dsimp only at *
     simp only [Classical.not_forall, Classical.not_not] at hf
