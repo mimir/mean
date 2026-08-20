@@ -950,48 +950,6 @@ theorem Program.free_in_fn_of_free_in_subst_of_ge {p : Program} {e : Expr}
   simp only [Option.some.injEq, hp.ne_end, false_or] at hlv
   exact ⟨n, m, hn, hm, hnn', hmm', (free_in_fn_iff hm hne).mpr ⟨k, hk, hlv, hp⟩⟩
 
-theorem Expr.free_of_free_in_subst_of_ge {p : Program} {e : Expr}
-    {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
-    (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
-    (ho : e.DeepOriginal p fm) {n' : Nat} (hn' : p.size ≤ n') :
-    let ⟨p', e', fm', _⟩ := e.subst p vm fm
-    e'.Free p' n' → ∃ (n : Nat) (_ : n < p.size),
-      fm'[n] = n' ∧ e.Free p n := by
-  intro hf
-  let p' := (e.subst p vm fm).program
-  let e' := (e.subst p vm fm).expr
-  let fm' := (e.subst p vm fm).funMap
-  have hvp' : p'.ValidRefs := Program.validRefs_subst hvm hfm hp ho
-  have h' : p'.ValidSubst vm.extend fm' :=
-    Program.validSubst_subst hvm hfm hp hvalid ho
-  have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
-  have hlt : n' < p'.size :=
-    lt_size_of_free hvp' (validRefs_subst hvm hfm ho) hf
-  obtain ⟨n, hn, heq⟩ := Program.exists_of_ge_in_subst hfm ho hn' hlt
-  obtain hlv' | ⟨m', k', hk', hlf', hp', hlv'⟩ := free_iff.mp hf
-  · refine ⟨n, hn, heq, free_of_localVar ?_⟩
-    have hfmn : fm'.Dom n := ⟨by lia, by grind⟩
-    simpa using localProvenance_subst hvm hfm ho hfmn (heq ▸ hlv')
-  · have hklt : k' < p'.size := by grind
-    by_cases hm' : m' < p.size
-    · grind [Program.prefix_subst.fn_eq]
-    · simp only [Nat.not_lt] at hm'
-      have hk' : p.size ≤ k' := by grind [Program.prefix_subst.fn_eq]
-      obtain ⟨n, m, k, hn, hm, hk, hnn', hmm', hkk', hp⟩ :=
-        Program.pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp hvalid ho hn' hm' hk'
-          ‹_› (validRefs_subst hvm hfm ho hlf') ‹_› hp'
-      replace hlf' : e'.LocalFn fm'[m] := by grind
-      replace hlv' : p'.fn[fm'[k]].LocalVar fm'[n] := by grind
-      have hfmn : fm'.Dom n := ⟨by lia, by grind⟩
-      have hfmm : fm'.Dom m := ⟨by lia, by grind⟩
-      have hfmk : fm'.Dom k := ⟨by lia, by grind⟩
-      have hlf := localProvenance_subst hvm hfm ho hfmm hlf'
-      simp only [reduceCtorEq, false_or] at hlf
-      have hlv := h'.fn_localProvenance hfmk (hkk' ▸ hklt) hfmn hlv'
-      rw [Program.prefix_subst.fn_eq hk] at hlv
-      simp only [Option.some.injEq, hp.ne_end, false_or] at hlv
-      exact ⟨n, hn, hnn', free_iff.mpr <| Or.inr ⟨m, k, hk, hlf, hp, hlv⟩⟩
-
 theorem Program.nests_of_nests_in_subst_of_lt {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} {m n : Nat} (hn : n < p.size)
     (hp : p.ValidRefs) (h : m ≻[(e.subst p vm fm).program] n) :
