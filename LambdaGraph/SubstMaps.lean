@@ -364,8 +364,8 @@ theorem exprProvenance_of_occursProvenance_of_exprProvenance {p p' p'' : Program
 
 @[scoped grind .]
 theorem exprProvenance_var {p p' : Program} {m : Nat} {vm : VarMap p.size}
-    {fm : FunMap p.size} :
-    ExprProvenance p p' (.var m) (vm[m]?.getD (.var m)) vm fm := by
+    {fm : FunMap p.size} (h : vm.Dom m) :
+    ExprProvenance p p' (.var m) (vm[m]'h.1) vm fm := by
   intro n h
   grind [Occurs, VarMap.UsesFn]
 
