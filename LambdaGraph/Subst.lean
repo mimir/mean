@@ -638,6 +638,35 @@ theorem Expr.validRefs_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     e'.ValidRefs p' := by
   fun_induction subst with grind
 
+@[grind .]
+theorem Expr.partialProvenance_bin {k : BinKind} {e₁ e₁' e₂ e₂' : Expr}
+    {n : Nat} {fm : FunMap n} (hf : e₁.PartialProvenance e₁' fm)
+    (he : e₂.PartialProvenance e₂' fm) :
+    (e₁.bin k e₂).PartialProvenance (e₁'.bin k e₂') fm := by
+  grind [PartialProvenance]
+
+@[grind .]
+theorem Expr.partialProvenance_cond {c c' et et' ef ef' : Expr} {n : Nat}
+    {fm : FunMap n} (hc : c.PartialProvenance c' fm)
+    (het : et.PartialProvenance et' fm) (hef : ef.PartialProvenance ef' fm) :
+    (c.cond et ef).PartialProvenance (c'.cond et' ef') fm := by
+  grind [PartialProvenance]
+
+@[grind .]
+theorem Expr.partialProvenance_proj {e e' : Expr} {i : Fin 2} {n : Nat}
+    {fm : FunMap n} (he : e.PartialProvenance e' fm) :
+    (e.proj i).PartialProvenance (e'.proj i) fm := by
+  grind [PartialProvenance]
+
+@[grind ⇐]
+theorem Expr.partialProvenance_of_extends {e e' : Expr} {n n' : Nat}
+    {fm : FunMap n} {fm' : FunMap n'} (hext : fm'.Extends fm)
+    (he : e'.Bounded n) (h : e.PartialProvenance e' fm) :
+    e.PartialProvenance e' fm' := by
+  intro n r hfmn hl
+  replace hfmn : fm.Dom n := by grind
+  exact h hfmn (hext.eq hfmn ▸ hl)
+
 theorem Expr.partialProvenance_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (ho : e.DeepOriginal p fm) :
@@ -672,65 +701,7 @@ theorem Expr.partialProvenance_subst {p : Program} {e : Expr}
     have : fm₂[m] = m' := by grind
     rw [← this] at hmn'
     grind [hfm₂.inj (by grind) hfmn hmn']
-  next p vm fm k e₁ e₂ hf p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ ih₁ ih₂ =>
-    rw [hs₁] at ih₁
-    rw [hs₂] at ih₂
-    dsimp only at *
-    have hvm₁ : vm.extend.Valid fm₁ := by grind
-    have hfm₁ : fm₁.Valid := by grind
-    obtain ⟨ho₁, ho₂⟩ := Expr.deepOriginal_bin_iff.mp ho
-    have hf' := ih₁ hvm hfm ho₁
-    have he' := ih₂ hvm₁ hfm₁ (deepOriginal_of_extends (by grind) (by grind) ho₂)
-    intro n r hfmn hl
-    have hext₁ : fm₂.Extends fm₁ := by grind
-    have hv₁' : e₁'.ValidRefs p₁ := by grind [validRefs_subst]
-    obtain hl | hl := Expr.local_bin_iff.mp hl
-    · replace ⟨hn, heq⟩ := hext₁.eq_of_lt hfmn.1 (hv₁' hl)
-      rw [heq] at hl
-      replace hfmn : fm₁.Dom n := by grind
-      have := hf' hfmn hl
-      grind
-    · have := he' hfmn hl
-      grind
-  next p vm fm c et ef hf p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃
-      hs₃ ihc ihet ihef =>
-    rw [hs₁] at ihc
-    rw [hs₂] at ihet
-    rw [hs₃] at ihef
-    dsimp only at ihc ihet ihef ⊢
-    have hvm₁ : vm₁.Valid fm₁ := by grind
-    have hfm₁ : fm₁.Valid := by grind
-    have hvm₂ : vm₁.extend.Valid fm₂ := by grind
-    have hfm₂ : fm₂.Valid := by grind
-    obtain ⟨hoc, hoet, hoef⟩ := Expr.deepOriginal_cond_iff.mp ho
-    have hc' := ihc hvm hfm hoc
-    have het' := ihet hvm₁ hfm₁
-      (deepOriginal_of_extends (by grind) (by grind) hoet)
-    have hef' := ihef hvm₂ hfm₂
-      (deepOriginal_of_extends (by grind) (by grind) hoef)
-    intro n r hfmn hl
-    have hext₁ : fm₃.Extends fm₁ := by grind
-    have hext₂ : fm₃.Extends fm₂ := by grind
-    have hvc' : c'.ValidRefs p₁ := by grind [validRefs_subst]
-    have hvet' : et'.ValidRefs p₂ := by
-      grind [validRefs_subst]
-    obtain hl | hl | hl := Expr.local_cond_iff.mp hl
-    · replace ⟨hn, heq⟩ := hext₁.eq_of_lt hfmn.1 (hvc' hl)
-      rw [heq] at hl
-      have := hc' (by grind) hl
-      grind
-    · replace ⟨hn, heq⟩ := hext₂.eq_of_lt hfmn.1 (hvet' hl)
-      rw [heq] at hl
-      have := het' (by grind [FunMap.Dom]) hl
-      grind
-    · have := hef' hfmn hl
-      grind
-  next p vm fm e i hf p' e' fm' h hs ih =>
-    rw [hs] at ih
-    dsimp only at ih ⊢
-    intro n r hfmn hl
-    rw [Expr.local_proj_iff] at hl ⊢
-    apply ih hvm hfm <;> grind
+  all_goals grind [validRefs_subst]
 
 theorem Program.validRefs_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
@@ -744,9 +715,9 @@ theorem Program.validRefs_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     have hp₂ := ih hvm₁ hfm₁ (validRefs_push hp (by grind)) (by grind)
     have hf' : f'.ValidRefs p₂ := by grind [Expr.validRefs_subst]
     exact validRefs_setBody (by grind) hp₂ hf'
-  next => grind
-  next => grind
-  next => grind
+  all_goals grind
+
+grind_pattern Program.validRefs_subst => (e.subst p vm fm).program
 
 def Program.PartialProvenance (p : Program) (vm : VarMap p.size)
     (fm : FunMap p.size) : Prop :=
@@ -776,6 +747,7 @@ theorem Program.partialProvenance_push_recurse {p : Program}
   replace hvmm : ¬vm.Dom m := by grind
   exact hprov hfmm (hfm.lt hm) hvmm hfmn hl
 
+@[grind .]
 theorem Program.partialProvenance_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (hprov : p.PartialProvenance vm fm)
@@ -809,9 +781,7 @@ theorem Program.partialProvenance_subst {p : Program} {e : Expr}
       simp only [ne_eq, not_false_eq_true, Ne.symm, Vector.getElem_set_ne, p₃, hnm'] at hl
       have hne : m' ≠ n := by grind
       simpa [p₃, *] using hprov₂ hfmn hn' (by grind) hfmk hl
-  next => grind [validRefs_subst]
-  next => grind [validRefs_subst]
-  next => grind [validRefs_subst]
+  all_goals grind
 
 abbrev VarMap.Dep (p : Program) (vm : VarMap p.size) (n : Nat) : Prop :=
   ∃ m, vm.Dom m ∧ m ≻[p] n
@@ -841,6 +811,7 @@ theorem Program.validSubst_push_recurse {p : Program} {vm : VarMap p.size}
       (vm.update i hi) (fm.update i hi) := by
   grind [ValidSubst, Expr.Original, FunMap.Original]
 
+@[grind .]
 theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
     (hvalid : p.ValidSubst vm fm) (ho : e.DeepOriginal p fm) :
@@ -904,9 +875,7 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
         have := hvalid.dom_of_dep hdep (by grind)
         contradiction
       · grind
-  next => grind [validRefs_subst]
-  next => grind [validRefs_subst]
-  next => grind [validRefs_subst]
+  all_goals grind
 
 theorem Program.exists_of_ge_in_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hfm : fm.Valid)
@@ -976,7 +945,7 @@ theorem Program.free_in_fn_of_free_in_subst_of_ge {p : Program} {e : Expr}
     validSubst_subst hvm hfm hp hvalid ho
   have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
   obtain ⟨k', hklt, hlv', hp'⟩ := (free_in_fn_iff hmlt hne').mp hf'
-  have hk' : p.size ≤ k' := by grind [prefix_subst.fn_eq]
+  have hk' : p.size ≤ k' := by grind
   have hnlt : n' < p'.size := by grind
   obtain ⟨n, m, k, hn, hm, hk, hnn', hmm', hkk', hp⟩ :=
     pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp hprov hvalid ho hn' hm'
@@ -1044,6 +1013,8 @@ theorem Program.subst_wf {p : Program} {e : Expr} {vm : VarMap p.size}
     obtain rfl : k = l := hfm'.inj hfmk hfml (by simp [fm', hkk', hll'])
     exact hwf hnests
 
+grind_pattern Program.subst_wf => p.WF, (e.subst p vm fm).program
+
 def Expr.WFSubst (e : Expr) (p : Program) (vm : VarMap p.size)
     (fm : FunMap p.size) : Prop :=
   ∀ ⦃n⦄, e.Free p n → vm.Dep p n → vm.Dom n ∧ fm.Dom n
@@ -1081,6 +1052,7 @@ theorem Expr.wfSubst_proj_iff {e : Expr} {i : Fin 2} {p : Program}
     (e.proj i).WFSubst p vm fm ↔ e.WFSubst p vm fm := by
   grind [WFSubst]
 
+@[grind ⇐]
 theorem Expr.wfSubst_of_prefix_of_extends {p p' : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} {fm' : FunMap p'.size}
     (hp : p.ValidRefs) (hpre : p.Prefix p') (hext : fm'.Extends fm)
@@ -1153,12 +1125,14 @@ def Expr.Provenance (e e' : Expr) (p : Program) (vm : VarMap p.size)
     (fm : FunMap p.size) : Prop :=
   ∀ ⦃n r⦄, e'.Local n r → e.Origin p vm fm n r
 
+@[grind .]
 theorem Expr.provenance_bin {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {k : BinKind} {e₁ e₁' e₂ e₂' : Expr}
     (hf : e₁.Provenance e₁' p vm fm) (he : e₂.Provenance e₂' p vm fm) :
     (e₁.bin k e₂).Provenance (e₁'.bin k e₂') p vm fm := by
   grind [Provenance, Origin]
 
+@[grind .]
 theorem Expr.provenance_cond {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {c c' et et' ef ef' : Expr}
     (hc : c.Provenance c' p vm fm) (het : et.Provenance et' p vm fm)
@@ -1166,12 +1140,14 @@ theorem Expr.provenance_cond {p : Program} {vm : VarMap p.size}
     (c.cond et ef).Provenance (c'.cond et' ef') p vm fm := by
   grind [Provenance, Origin]
 
+@[grind .]
 theorem Expr.provenance_proj {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {e e' : Expr} {i : Fin 2}
     (he : e.Provenance e' p vm fm) :
     (e.proj i).Provenance (e'.proj i) p vm fm := by
   grind [Provenance, Origin]
 
+@[grind ⇐]
 theorem Expr.provenance_of_prefix_of_extends {p p' : Program}
     {vm : VarMap p.size} {fm : FunMap p.size} {fm' : FunMap p'.size}
     {e e' : Expr} (hp : p.ValidRefs) (hpre : p.Prefix p')
@@ -1222,49 +1198,7 @@ theorem Expr.provenance_subst {p : Program} {e : Expr}
     obtain ⟨rfl, rfl⟩ := local_fn_iff.mp hl
     have hext : fm₂.Extends fm₁ := by grind [FunMap.valid_update]
     exact .mapped m (by grind) (by grind) .fn
-  next p vm fm k e₁ e₂ hf p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ ih₁ ih₂ =>
-    rw [hs₁] at ih₁
-    rw [hs₂] at ih₂
-    dsimp only at *
-    have hp₁ : p₁.ValidRefs := by grind [Program.validRefs_subst]
-    have hvalid₂ : p₂.ValidSubst vm.extend fm₂ := by
-      grind [Program.validSubst_subst]
-    have he₁' : e₁.Provenance e₁' p₁ vm.extend fm₁ := by grind
-    have he₂' : e₂.Provenance e₂' p₂ vm.extend fm₂ := by
-      grind [wfSubst_of_prefix_of_extends, Program.partialProvenance_subst,
-        Program.validSubst_subst, Program.subst_wf]
-    have hext : fm₂.Extends fm₁ := by grind
-    replace he₁' : e₁.Provenance e₁' p₂ vm.extend fm₂ := by
-      grind [provenance_of_prefix_of_extends]
-    exact provenance_bin he₁' he₂'
-  next p vm fm c et ef hf p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃
-      hs₃ ihc ihet ihef =>
-    rw [hs₁] at ihc
-    rw [hs₂] at ihet
-    rw [hs₃] at ihef
-    dsimp only at *
-    have hp₁ : p₁.ValidRefs := by grind [Program.validRefs_subst]
-    have hp₂ : p₂.ValidRefs := by grind [Program.validRefs_subst]
-    have hvalid₃ : p₃.ValidSubst vm.extend fm₃ := by
-      grind [Program.validRefs_subst, Program.validSubst_subst]
-    have hc' : c.Provenance c' p₁ vm.extend fm₁ := by grind
-    have het' : et.Provenance et' p₂ vm.extend fm₂ := by
-      grind [wfSubst_of_prefix_of_extends, Program.validRefs_subst,
-        Program.partialProvenance_subst, Program.validSubst_subst, Program.subst_wf]
-    have hef' : ef.Provenance ef' p₃ vm.extend fm₃ := by
-      grind [wfSubst_of_prefix_of_extends, Program.validRefs_subst,
-        Program.partialProvenance_subst, Program.validSubst_subst, Program.subst_wf]
-    have hext₁ : fm₂.Extends fm₁ := by grind
-    have hext₂ : fm₃.Extends fm₂ := by grind
-    replace hc' : c.Provenance c' p₃ vm.extend fm₃ := by
-      grind [provenance_of_prefix_of_extends]
-    replace het' : et.Provenance et' p₃ vm.extend fm₃ := by
-      grind [provenance_of_prefix_of_extends]
-    exact provenance_cond hc' het' hef'
-  next p vm fm e i hf p' e' fm' h hs ih =>
-    rw [hs] at ih
-    apply provenance_proj
-    grind
+  all_goals grind
 
 theorem Program.push_wf {p : Program} {b : Expr} {t₁ t₂ : Ty} (hp : p.ValidRefs)
     (h : p.WF) : (p.push b t₁ t₂).WF := by
@@ -1285,7 +1219,7 @@ def Program.Provenance (p : Program) (vm : VarMap p.size) (fm : FunMap p.size) :
 
 theorem Program.provenance_mk {p : Program} {n : Nat} {v : Expr} :
     p.Provenance (.mk _ n v) (.mk _) := by
-  grind [WF, Provenance]
+  grind [Provenance]
 
 theorem Expr.partialProvenance_of_provenance {p : Program} {e e' : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
@@ -1402,14 +1336,7 @@ theorem Program.provenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
       · have : m ≠ l := by grind
         exact .subst l (by grind) (by grind) hlv (by grind)
       · exact .mapped l hfml hlk hlc
-  next p vm fm k e₁ e₂ hf p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ ih₁ ih₂ =>
-    grind [validRefs_subst, partialProvenance_of_provenance, validSubst_subst,
-      subst_wf, Expr.wfSubst_of_prefix_of_extends]
-  next p vm fm c et ef hf p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃
-      hs₃ ihc ihet ihef =>
-    grind [validRefs_subst, partialProvenance_of_provenance, validSubst_subst,
-      subst_wf, Expr.wfSubst_of_prefix_of_extends]
-  next => grind
+  all_goals grind [partialProvenance_of_provenance]
 
 theorem Program.free_in_fn_of_free_in_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
