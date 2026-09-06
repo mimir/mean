@@ -47,8 +47,7 @@ noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
     ⟨p, e, fm, by rfl, by simp, by simp, by simp⟩
   else
     match e with
-    | var m =>
-      ⟨p, vm[m]?.getD (var m), fm, by rfl, by simp, by grind, by simp⟩
+    | var m => ⟨p, vm[m], fm, by rfl, by simp, by grind, by simp⟩
     | fn m =>
       have hm : m < p.size := by grind
       if hfmm : fm.Dom m then
@@ -140,11 +139,8 @@ theorem Expr.subst_types {p : Program} {e : Expr} {t : Ty} {vm : VarMap p.size}
   fun_induction subst generalizing t <;> dsimp only at *
   next => exact ht
   next p vm fm m h =>
-    by_cases hm : m < p.size
-    · simp only [hm, getElem?_pos, Option.getD_some]
-      have .var _ _ := ht
-      apply hvm
-    · simp [hm, ht]
+    have .var _ _ := ht
+    apply hvm
   next p vm fm m hm hfmm hf =>
     have .fn _ _ := ht
     obtain ⟨_, hty, hret⟩ := hfm _ ‹m < p.size›
@@ -376,10 +372,6 @@ theorem Expr.deepOriginal_mk {p : Program} {e : Expr} (hp : p.ValidRefs)
       exact ⟨hm, original_mk (hp hm)⟩
     | there e k hk hl hr ih => exact ih (hp hk)
 
-def FunMap.LocalProvenance {n : Nat} (fm : FunMap n) (e e' : Expr) (k : Option Nat) :
-    Prop :=
-  ∀ ⦃m r⦄ (hm : fm.Dom m), e'.Local fm[m] r → m = k ∨ e.Local m r
-
 structure FunMap.Valid {n : Nat} (fm : FunMap n) : Prop where
   lt : ∀ {m} (_ : m < n), fm[m] < n
   inj : ∀ {m k} (hm : fm.Dom m) (hk : fm.Dom k), fm[m] = fm[k] → m = k
@@ -551,10 +543,13 @@ theorem FunMap.valid_subst {p : Program} {e : Expr} {vm : VarMap p.size}
 
 grind_pattern FunMap.valid_subst => (e.subst p vm fm).funMap
 
+def Expr.PartialProvenance {n : Nat} (e e' : Expr) (fm : FunMap n) : Prop :=
+  ∀ ⦃m r⦄ (hm : fm.Dom m), e'.Local fm[m] r → e.Local m r
+
 structure VarMap.Valid {n : Nat} (vm : VarMap n) (fm : FunMap n) : Prop where
   bounded : ∀ {m} (_ : m < n), vm[m].Bounded n
-  localProvenance : ∀ {m} (hm : fm.Dom m),
-    fm.LocalProvenance (.var m) vm[m] none
+  partialProvenance : ∀ {m} (hm : fm.Dom m),
+    Expr.PartialProvenance (.var m) vm[m] fm
   original : ∀ {m} (hm : vm.Dom m), ¬fm.Dom m → vm[m].Original fm
 
 attribute [grind! .] VarMap.Valid.bounded
@@ -576,14 +571,14 @@ theorem VarMap.valid_update {p : Program} {vm : VarMap p.size}
         simp [*]
       · replace hk : k < p.size := by lia
         simpa [*] using Expr.bounded_of_ge (by lia) (hvm.bounded hk)
-  case localProvenance =>
+  case partialProvenance =>
     intro m hfmm n r hfmn hl
     have hm : m < p.size := by grind
     have hn : n < p.size := by grind
     by_cases i = m
     · grind
     · have : i ≠ n := by grind
-      apply hvm.localProvenance <;> grind
+      apply hvm.partialProvenance <;> grind
   case original => grind [Expr.original_update, hvm.original]
 
 theorem VarMap.valid_subst {p : Program} {e : Expr} {vm : VarMap p.size}
@@ -607,7 +602,7 @@ theorem VarMap.valid_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     have hext := FunMap.extends_trans hext₁ hext₂
     constructor
     case bounded => grind
-    case localProvenance =>
+    case partialProvenance =>
       intro k hfmk l r hfml hlc
       by_cases hk : k < p.size
       · simp only [VarMap.getElem_extend_lt, *] at hlc
@@ -619,9 +614,9 @@ theorem VarMap.valid_subst {p : Program} {e : Expr} {vm : VarMap p.size}
           by_cases hvmm : vm.Dom m
           · grind [hvm.original hvmm hfmm hlc]
           · grind [Dom]
-        · apply hvm₂.localProvenance hfmk hfml
+        · apply hvm₂.partialProvenance hfmk hfml
           simp [vm₁, show k < p.size + 1 by lia, *]
-      · apply hvm₂.localProvenance hfmk hfml
+      · apply hvm₂.partialProvenance hfmk hfml
         simp only [Nat.not_lt] at hk
         simpa [vm₁, show p.size + 1 ≤ k by grind, *] using hlc
     case original =>
@@ -643,11 +638,11 @@ theorem Expr.validRefs_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     e'.ValidRefs p' := by
   fun_induction subst with grind
 
-theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid)
-    (ho : e.DeepOriginal p fm) :
+theorem Expr.partialProvenance_subst {p : Program} {e : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
+    (hfm : fm.Valid) (ho : e.DeepOriginal p fm) :
     let ⟨_, e', fm', _⟩ := e.subst p vm fm
-    fm'.LocalProvenance e e' none := by
+    e.PartialProvenance e' fm' := by
   fun_induction Expr.subst
   next p e vm fm h =>
     intro n r hn hl
@@ -656,9 +651,8 @@ theorem Expr.localProvenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
   next p vm fm m h =>
     intro n r hn hl
     have hm : m < p.size := by grind
-    simp only [hm, getElem?_pos, Option.getD_some] at hl
     by_cases hfmm : fm.Dom m
-    · exact hvm.localProvenance hfmm hn hl
+    · exact hvm.partialProvenance hfmm hn hl
     · simp only [free_in_var_iff, forall_eq, Classical.not_not] at h
       grind [hvm.original h hfmm hl]
   next p vm fm m hm hfmm hf =>
@@ -754,11 +748,85 @@ theorem Program.validRefs_subst {p : Program} {e : Expr} {vm : VarMap p.size}
   next => grind
   next => grind
 
+def Program.PartialProvenance (p : Program) (vm : VarMap p.size)
+    (fm : FunMap p.size) : Prop :=
+  ∀ ⦃m⦄ (hm : fm.Dom m) (_ : fm[m] < p.size),
+    ¬vm.Dom m → p.fn[m].PartialProvenance p.fn[fm[m]] fm
+
+theorem Program.partialProvenance_mk {p : Program} {n : Nat} {v : Expr} :
+    p.PartialProvenance (.mk _ n v) (.mk _) := by
+  intro m hfmm
+  grind
+
+theorem Program.partialProvenance_push_recurse {p : Program}
+    {vm : VarMap p.size} {fm : FunMap p.size} {i : Nat} (hi : i < p.size)
+    (hfm : fm.Valid) (hp : p.ValidRefs) (hprov : p.PartialProvenance vm fm) :
+    (p.push (.recurse p.size) p.ty[i] p.ret[i]).PartialProvenance
+      (vm.update i hi) (fm.update i hi) := by
+  let p' := p.push (.recurse p.size) p.ty[i] p.ret[i]
+  intro m hfmm hm' hvmm n r hfmn hl
+  have him : i ≠ m := by grind
+  have hin : i ≠ n := by grind
+  have hm : m < p.size := by grind
+  have hn : n < p.size := by grind
+  rw [prefix_push.fn_eq hm]
+  replace hl : p.fn[fm[m]].Local fm[n] r := by grind
+  replace hfmm : fm.Dom m := by grind
+  replace hfmn : fm.Dom n := by grind
+  replace hvmm : ¬vm.Dom m := by grind
+  exact hprov hfmm (hfm.lt hm) hvmm hfmn hl
+
+theorem Program.partialProvenance_subst {p : Program} {e : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
+    (hfm : fm.Valid) (hp : p.ValidRefs) (hprov : p.PartialProvenance vm fm)
+    (ho : e.DeepOriginal p fm) :
+    let ⟨p', _, fm', _⟩ := e.subst p vm fm
+    p'.PartialProvenance vm.extend fm' := by
+  fun_induction Expr.subst <;> try simpa using hprov
+  next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' ih =>
+    rw [hs₂] at ih
+    dsimp only at ih
+    have hvm₁ : vm₁.Valid fm₁ := VarMap.valid_update hm hvm hfm
+    have hfm₁ : fm₁.Valid := FunMap.valid_update hm (by grind) hfm
+    have hext₂ : fm₂.Extends fm₁ := by grind
+    have hfm₂ : fm₂.Valid := by grind
+    have hprov₂ := ih hvm₁ hfm₁ (validRefs_push hp (by grind))
+      (partialProvenance_push_recurse hm hfm hp hprov) (by grind)
+    have hprov : p.fn[m].PartialProvenance f' fm₂ := by
+      grind [Expr.partialProvenance_subst]
+    have hpre : p.Prefix p₃ := by grind
+    intro n hfmn hn' hvmn k r hfmk hl
+    have hfmm : fm₂[m] = m' := by grind
+    by_cases hnm : m = n
+    · subst n
+      simp only [Vector.getElem_set_self, p₃, hfmm] at hl
+      grind [hprov hfmk hl]
+    · have hnm' : fm₂[n] ≠ m' := by
+        intro heq
+        rw [← heq] at hfmm
+        have := hfm₂.inj (by grind) (by grind) hfmm
+        contradiction
+      simp only [ne_eq, not_false_eq_true, Ne.symm, Vector.getElem_set_ne, p₃, hnm'] at hl
+      have hne : m' ≠ n := by grind
+      simpa [p₃, *] using hprov₂ hfmn hn' (by grind) hfmk hl
+  next => grind [validRefs_subst]
+  next => grind [validRefs_subst]
+  next => grind [validRefs_subst]
+
+abbrev VarMap.Dep (p : Program) (vm : VarMap p.size) (n : Nat) : Prop :=
+  ∃ m, vm.Dom m ∧ m ≻[p] n
+
+theorem VarMap.dep_in_prefix_iff {p p' : Program} {vm : VarMap p.size} {n : Nat}
+    (hp : p.ValidRefs) (h : p.Prefix p') (hn : n < p.size) :
+    vm.extend.Dep p' n ↔ vm.Dep p n := by
+  grind
+
 structure Program.ValidSubst (p : Program) (vm : VarMap p.size) (fm : FunMap p.size) where
-  fn_localProvenance : ∀ {m} (hm : fm.Dom m) (hm' : fm[m] < p.size),
-    fm.LocalProvenance p.fn[m] p.fn[fm[m]] m
-  nests_of_dom : ∀ {m}, fm.Dom m → ∃ n, vm.Dom n ∧ n ≻[p] m
-  dom_of_nests : ∀ {n m}, vm.Dom n → n ≻[p] m → vm.Dom m → fm.Dom m
+  eq_of_local : ∀ {m} (hm : fm.Dom m) (hm' : fm[m] < p.size),
+    vm.Dom m → ∀ {k r}, p.fn[fm[m]].Local k r → k = fm[m]
+  dep_of_dom : ∀ {m}, fm.Dom m → vm.Dep p m
+  dom_of_dep : ∀ {m}, vm.Dep p m → vm.Dom m → fm.Dom m
+  original_of_dom : ∀ {m} (hm : fm.Dom m), p.fn[m].Original fm
   compat : ∀ {m} (hm : fm.Dom m), vm.Dom m → vm[m] = .var fm[m]
 
 theorem Program.validSubst_mk {p : Program} {n : Nat} {v : Expr} (hwf : p.WF) :
@@ -766,30 +834,12 @@ theorem Program.validSubst_mk {p : Program} {n : Nat} {v : Expr} (hwf : p.WF) :
   constructor <;> grind [VarMap.Dom, FunMap.Dom, WF]
 
 theorem Program.validSubst_push_recurse {p : Program} {vm : VarMap p.size}
-    {fm : FunMap p.size} {l i : Nat} (hi : i < p.size) (hfm : fm.Valid)
-    (hp : p.ValidRefs) (hvml : vm.Dom l) (hnestsi : l ≻[p] i)
+    {fm : FunMap p.size} {i : Nat} (hi : i < p.size) (hfm : fm.Valid)
+    (hp : p.ValidRefs) (hdep : vm.Dep p i) (ho : p.fn[i].Original fm)
     (hvalid : p.ValidSubst vm fm) :
     (p.push (.recurse p.size) p.ty[i] p.ret[i]).ValidSubst
       (vm.update i hi) (fm.update i hi) := by
-  constructor
-  case fn_localProvenance =>
-    intro m hfmm hm' n r hfmn hl
-    by_cases hnm : n = m
-    · simp [*]
-    · right
-      replace hm : m < p.size := by grind
-      replace hn : n < p.size := by grind
-      have hm' := hfm.lt hm
-      have hn' := hfm.lt hn
-      have him : i ≠ m := by grind
-      have hin : i ≠ n := by grind
-      replace hfmm : fm.Dom m := by grind
-      replace hfmn : fm.Dom n := by grind
-      have := hvalid.fn_localProvenance hfmm hm' hfmn (by simpa [*] using hl)
-      simpa [*]
-  case nests_of_dom => grind [hvalid.nests_of_dom]
-  case dom_of_nests => grind [hvalid.dom_of_nests]
-  case compat => grind [hvalid.compat]
+  grind [ValidSubst, Expr.Original, FunMap.Original]
 
 theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
@@ -805,48 +855,31 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     have hnestsm : l ≻[p] m := by
       replace .fn _ hm hne hf := hf
       exact .free _ _ hvml.1 hm hne hf
-    have hext₁ : fm₁.Extends fm := FunMap.extends_update hm hfm (by grind) hfmm
+    have hdep : vm.Dep p m := ⟨l, hvml, hnestsm⟩
     have hvm₁ : vm₁.Valid fm₁ := VarMap.valid_update hm hvm hfm
-    have hfm₁ : fm₁.Valid := hext₁.valid
+    have hfm₁ : fm₁.Valid := FunMap.valid_update hm (by grind) hfm
     have hext₂ : fm₂.Extends fm₁ := by grind
     have hvm₂ : vm₁.extend.Valid fm₂ := by grind [VarMap.valid_subst]
     have hfm₂ : fm₂.Valid := by grind
+    have ⟨hm, hom⟩ := ho.2 _ (.here _ .fn)
     have hvalid₂ := ih hvm₁ hfm₁ (validRefs_push hp (by grind))
-      (validSubst_push_recurse hm hfm hp hvml hnestsm hvalid) (by grind)
-    have hext := FunMap.extends_trans hext₁ hext₂
-    have hprov : fm₂.LocalProvenance p.fn[m] f' none := by
-      grind [Expr.localProvenance_subst]
+      (validSubst_push_recurse hm hfm hp hdep hom hvalid) (by grind)
     have hpre : p.Prefix p₃ := by grind
     constructor
-    case fn_localProvenance =>
-      intro n hfmn hn' k r hfmk hl
-      have hfmm : fm₂[m] = m' := by grind [hext₂.eq]
-      by_cases hnm : m = n
-      · subst n
-        simp only [Vector.getElem_set_self, p₃, hfmm] at hl
-        replace hl := hprov hfmk hl
-        simp only [reduceCtorEq, false_or] at hl
-        have heq : p₂.fn[m] = p.fn[m] := by
-          have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
-          subst p₂
-          rw [prefix_subst.fn_eq (by lia)]
-          simp [p₁, hm]
-        simp [p₃, hfmm ▸ hfmn.2, *]
-      · have hnm' : fm₂[n] ≠ m' := by
-          intro heq
-          rw [← heq] at hfmm
-          have := hfm₂.inj (by grind) (by grind) hfmm
-          contradiction
-        simp only [ne_eq, not_false_eq_true, Ne.symm, Vector.getElem_set_ne, p₃, hnm'] at hl
-        have hne : m' ≠ n := by grind
-        cases hvalid₂.fn_localProvenance hfmn hn' hfmk hl <;> simp [p₃, *]
-    case nests_of_dom =>
+    case eq_of_local =>
+      intro n hfmn hn' hvmn k r hl
+      by_cases m = n
+      · have := hvalid.dom_of_dep hdep (by grind)
+        contradiction
+      · rw [Vector.getElem_set_ne (by grind) hn' (by grind)] at hl
+        exact hvalid₂.eq_of_local hfmn hn' (by grind) hl
+    case dep_of_dom =>
       have hnestsm₃ : l ≻[p₃] m := by grind
       intro n hfmn
       by_cases m = n
       · subst n
         grind
-      · obtain ⟨k, hvmk, hnests⟩ := hvalid₂.nests_of_dom hfmn
+      · obtain ⟨k, hvmk, hnests⟩ := hvalid₂.dep_of_dom hfmn
         have hb : p₂.fn[m'] = Expr.recurse m' := by
           have hp₂ : p₂ = (p.fn[m].subst p₁ vm₁ fm₁).program := by grind
           subst p₂
@@ -854,20 +887,21 @@ theorem Program.validSubst_subst {p : Program} {e : Expr} {vm : VarMap p.size}
           grind
         replace hnests : k ≻[p₃] n := nests_in_setBody (by grind) (by grind) hnests
         grind
-    case dom_of_nests =>
-      intro n k hvmn hnests hvmk
+    case dom_of_dep =>
+      intro k hdep hvmk
       by_cases hk : k < p.size
-      · replace hnests : n ≻[p] k := by grind
-        have := hvalid.dom_of_nests (by grind) hnests (by grind)
+      · have := hvalid.dom_of_dep
+          ((VarMap.dep_in_prefix_iff hp hpre hk).mp hdep) (by grind)
         grind
       · grind
+    case original_of_dom => grind [hvalid₂.original_of_dom]
     case compat =>
       intro k hfmk hvmk
       have hfmm : ¬fm.Dom m := by grind
       have := hvalid₂.compat hfmk (by grind)
       by_cases m = k
       · subst k
-        have := hvalid.dom_of_nests hvml hnestsm (by grind)
+        have := hvalid.dom_of_dep hdep (by grind)
         contradiction
       · grind
   next => grind [validRefs_subst]
@@ -886,9 +920,9 @@ theorem Program.exists_of_ge_in_subst {p : Program} {e : Expr}
 
 theorem Program.pathWithout_of_pathWithout_in_subst_of_ge {p : Program}
     {e : Expr} {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
-    (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
-    (ho : e.DeepOriginal p fm) {n' m' k' : Nat} (hn' : p.size ≤ n')
-    (hm' : p.size ≤ m') (hk' : p.size ≤ k') :
+    (hfm : fm.Valid) (hp : p.ValidRefs) (hprov : p.PartialProvenance vm fm)
+    (hvalid : p.ValidSubst vm fm) (ho : e.DeepOriginal p fm) {n' m' k' : Nat}
+    (hn' : p.size ≤ n') (hm' : p.size ≤ m') (hk' : p.size ≤ k') :
     let ⟨p', _, fm', _⟩ := e.subst p vm fm
     n' < p'.size → m' < p'.size → k' < p'.size → m' ⟶[p', n']* k' →
       ∃ (n m k : Nat) (hn : n < p.size) (hm : m < p.size) (hk : k < p.size),
@@ -897,14 +931,16 @@ theorem Program.pathWithout_of_pathWithout_in_subst_of_ge {p : Program}
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
   have hvp' : p'.ValidRefs := validRefs_subst hvm hfm hp ho
-  have h' : p'.ValidSubst vm.extend fm' :=
-    Program.validSubst_subst hvm hfm hp hvalid ho
+  have hprov' : p'.PartialProvenance vm.extend fm' :=
+    partialProvenance_subst hvm hfm hp hprov ho
+  have hvalid' : p'.ValidSubst vm.extend fm' :=
+    validSubst_subst hvm hfm hp hvalid ho
   induction hp' with
   | refl m' hne' =>
-    obtain ⟨n, hn, hfmn⟩ := exists_of_ge_in_subst hfm ho hn' hnlt
-    obtain ⟨m, hm, hfmm⟩ := exists_of_ge_in_subst hfm ho hm' hmlt
+    obtain ⟨n, hn, hnn'⟩ := exists_of_ge_in_subst hfm ho hn' hnlt
+    obtain ⟨m, hm, hmm'⟩ := exists_of_ge_in_subst hfm ho hm' hmlt
     have hne : n ≠ m := by grind
-    exact ⟨n, m, m, hn, hm, hm, hfmn, hfmm, hfmm, .refl _ hne⟩
+    exact ⟨n, m, m, hn, hm, hm, hnn', hmm', hmm', .refl _ hne⟩
   | step m' l' k' hne' hs' hp' ih =>
     obtain ⟨m, hm, hmm'⟩ := exists_of_ge_in_subst hfm ho hm' hmlt
     have hl' : p.size ≤ l' := by grind
@@ -915,17 +951,17 @@ theorem Program.pathWithout_of_pathWithout_in_subst_of_ge {p : Program}
     have hne : n ≠ m := by grind
     have hfmm : fm'.Dom m := ⟨by lia, by grind⟩
     have hfml : fm'.Dom l := ⟨by lia, by grind⟩
-    have hlf := h'.fn_localProvenance hfmm (hmm' ▸ hmlt) hfml hlf'
-    simp only [Option.some.injEq, prefix_subst.fn_eq hm, p'] at hlf
-    obtain heq | hlf := hlf
-    · grind
-    · exact ⟨n, m, k, hn, hm, hk, hnn', hmm', hkk', .step _ _ _ hne ⟨hm, hlf⟩ hp⟩
+    by_cases hvmm : (vm.extend (n' := p'.size)).Dom m
+    · grind [hvalid'.eq_of_local]
+    · have hlf := hprov' hfmm (hmm' ▸ hmlt) hvmm hfml hlf'
+      rw [prefix_subst.fn_eq hm] at hlf
+      exact ⟨n, m, k, hn, hm, hk, hnn', hmm', hkk', .step _ _ _ hne ⟨hm, hlf⟩ hp⟩
 
 theorem Program.free_in_fn_of_free_in_subst_of_ge {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
-    (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
-    (ho : e.DeepOriginal p fm) {n' m' : Nat} (hn' : p.size ≤ n')
-    (hm' : p.size ≤ m') (hne' : n' ≠ m') :
+    (hfm : fm.Valid) (hp : p.ValidRefs) (hprov : p.PartialProvenance vm fm)
+    (hvalid : p.ValidSubst vm fm) (ho : e.DeepOriginal p fm) {n' m' : Nat}
+    (hn' : p.size ≤ n') (hm' : p.size ≤ m') (hne' : n' ≠ m') :
     let ⟨p', _, fm', _⟩ := e.subst p vm fm
     ∀ (_ : m' < p'.size), p'.fn[m'].Free p' n' →
       ∃ (n m : Nat) (hn : n < p.size) (hm : m < p.size),
@@ -934,20 +970,25 @@ theorem Program.free_in_fn_of_free_in_subst_of_ge {p : Program} {e : Expr}
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
   have hvp' : p'.ValidRefs := validRefs_subst hvm hfm hp ho
-  have h' : p'.ValidSubst vm.extend fm' :=
-    Program.validSubst_subst hvm hfm hp hvalid ho
+  have hprov' : p'.PartialProvenance vm.extend fm' :=
+    partialProvenance_subst hvm hfm hp hprov ho
+  have hvalid' : p'.ValidSubst vm.extend fm' :=
+    validSubst_subst hvm hfm hp hvalid ho
+  have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
   obtain ⟨k', hklt, hlv', hp'⟩ := (free_in_fn_iff hmlt hne').mp hf'
   have hk' : p.size ≤ k' := by grind [prefix_subst.fn_eq]
   have hnlt : n' < p'.size := by grind
   obtain ⟨n, m, k, hn, hm, hk, hnn', hmm', hkk', hp⟩ :=
-    pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp hvalid ho hn' hm' hk' hnlt hmlt hklt hp'
+    pathWithout_of_pathWithout_in_subst_of_ge hvm hfm hp hprov hvalid ho hn' hm'
+      hk' hnlt hmlt hklt hp'
   replace hlv' : p'.fn[fm'[k]].LocalVar fm'[n] := by grind
   have hne : n ≠ m := by grind
   have hfmk : fm'.Dom k := ⟨by lia, by grind⟩
   have hfmn : fm'.Dom n := ⟨by lia, by grind⟩
-  have hlv := h'.fn_localProvenance hfmk (hkk' ▸ hklt) hfmn hlv'
+  have hvmk : ¬(vm.extend (n' := p'.size)).Dom k := by
+    grind [hp.ne_end, hvalid'.eq_of_local, hfm'.inj]
+  have hlv := hprov' hfmk (hkk' ▸ hklt) hvmk hfmn hlv'
   rw [prefix_subst.fn_eq hk] at hlv
-  simp only [Option.some.injEq, hp.ne_end, false_or] at hlv
   exact ⟨n, m, hn, hm, hnn', hmm', (free_in_fn_iff hm hne).mpr ⟨k, hk, hlv, hp⟩⟩
 
 theorem Program.nests_of_nests_in_subst_of_lt {p : Program} {e : Expr}
@@ -957,21 +998,22 @@ theorem Program.nests_of_nests_in_subst_of_lt {p : Program} {e : Expr}
 
 theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
-    (hfm : fm.Valid) (hp : p.ValidRefs) (h : p.ValidSubst vm fm)
-    (ho : e.DeepOriginal p fm) {n' m' : Nat} (hn' : p.size ≤ n') :
+    (hfm : fm.Valid) (hp : p.ValidRefs) (hprov : p.PartialProvenance vm fm)
+    (hvalid : p.ValidSubst vm fm) (ho : e.DeepOriginal p fm) {n' m' : Nat}
+    (hn' : p.size ≤ n') :
     let ⟨p', _, fm', _⟩ := e.subst p vm fm
     n' ≻[p'] m' → ∃ (n m : Nat) (hn : n < p.size) (hm : m < p.size),
       fm'[n] = n' ∧ fm'[m] = m' ∧ n ≻[p] m := by
   intro hnests'
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
-  have h' : p'.ValidSubst vm.extend fm' := Program.validSubst_subst hvm hfm hp h ho
   have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
   induction hnests' with
   | free n' m' hltn hltm hne' hf' =>
     have hm' : p.size ≤ m' := by grind
     obtain ⟨n, m, hn, hm, hfmn, hfmm, hf⟩ :=
-      Program.free_in_fn_of_free_in_subst_of_ge hvm hfm hp h ho hn' hm' hne' hltm hf'
+      Program.free_in_fn_of_free_in_subst_of_ge hvm hfm hp hprov hvalid ho hn'
+        hm' hne' hltm hf'
     have hne : n ≠ m := by grind
     exact ⟨n, m, hn, hm, hfmn, hfmm, .free _ _ hn hm hne hf⟩
   | trans n' k' m' hnests₁' hnests₂' ih₁ ih₂ =>
@@ -985,7 +1027,8 @@ theorem Program.nests_of_nests_in_subst_of_ge {p : Program} {e : Expr}
 
 theorem Program.subst_wf {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
-    (h : p.ValidSubst vm fm) (ho : e.DeepOriginal p fm) (hwf : p.WF) :
+    (hprov : p.PartialProvenance vm fm) (hvalid : p.ValidSubst vm fm)
+    (ho : e.DeepOriginal p fm) (hwf : p.WF) :
     (e.subst p vm fm).program.WF := by
   intro m hnests
   let p' := (e.subst p vm fm).program
@@ -993,10 +1036,9 @@ theorem Program.subst_wf {p : Program} {e : Expr} {vm : VarMap p.size}
   by_cases hm : m < p.size
   · exact hwf <| nests_of_nests_in_subst_of_lt hm hp hnests
   · simp only [Nat.not_lt] at hm
-    have hvalid' : p'.ValidSubst vm.extend fm' := validSubst_subst hvm hfm hp h ho
     have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
     replace ⟨k, l, hk, hl, hkk', hll', hnests⟩ :=
-      nests_of_nests_in_subst_of_ge hvm hfm hp h ho hm hnests
+      nests_of_nests_in_subst_of_ge hvm hfm hp hprov hvalid ho hm hnests
     have hfmk : fm'.Dom k := ⟨by grind, by grind⟩
     have hfml : fm'.Dom l := ⟨by grind, by grind⟩
     obtain rfl : k = l := hfm'.inj hfmk hfml (by simp [fm', hkk', hll'])
@@ -1004,7 +1046,21 @@ theorem Program.subst_wf {p : Program} {e : Expr} {vm : VarMap p.size}
 
 def Expr.WFSubst (e : Expr) (p : Program) (vm : VarMap p.size)
     (fm : FunMap p.size) : Prop :=
-  ∀ ⦃n m⦄, n ≻[p] m → e.Free p m → vm.Dom n → vm.Dom m ∧ fm.Dom m
+  ∀ ⦃n⦄, e.Free p n → vm.Dep p n → vm.Dom n ∧ fm.Dom n
+
+theorem Expr.wfSubst_mk {p : Program} {e : Expr} {n : Nat} {v : Expr}
+    (hwf : p.WF) (hwfe : ∀ k, e.Free p k → k ≽[p] n) :
+    e.WFSubst p (.mk _ n v) (.mk _) := by
+  have hnnests : ∀ k, e.Free p k → n ⊁[p] k := by
+    intro k hf hnests
+    cases hwfe _ hf with
+    | refl _ => exact hwf hnests
+    | nests _ h => exact hwf (.trans _ _ _ hnests h)
+  intro l hf ⟨k, h, hnests⟩
+  have : n ≠ k := by
+    intro rfl
+    exact hnnests _ hf hnests
+  grind
 
 @[grind =]
 theorem Expr.wfSubst_bin_iff {k : BinKind} {e₁ e₂ : Expr} {p : Program}
@@ -1025,115 +1081,147 @@ theorem Expr.wfSubst_proj_iff {e : Expr} {i : Fin 2} {p : Program}
     (e.proj i).WFSubst p vm fm ↔ e.WFSubst p vm fm := by
   grind [WFSubst]
 
-theorem Expr.wfSubst_in_subst {p : Program} {e₁ e₂ : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} (hfm : fm.Valid) (hp : p.ValidRefs)
-    (he₁ : e₁.ValidRefs p) (ho : e₂.DeepOriginal p fm)
-    (h : e₁.WFSubst p vm fm) :
-    let ⟨p', _, fm', _⟩ := e₂.subst p vm fm
-    e₁.WFSubst p' vm.extend fm' := by
+theorem Expr.wfSubst_of_prefix_of_extends {p p' : Program} {e : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} {fm' : FunMap p'.size}
+    (hp : p.ValidRefs) (hpre : p.Prefix p') (hext : fm'.Extends fm)
+    (he : e.ValidRefs p) (h : e.WFSubst p vm fm) :
+    e.WFSubst p' vm.extend fm' := by
   grind [WFSubst]
 
+theorem Program.wfSubst_fn_mk {p : Program} {n : Nat} {v : Expr}
+    (hn : n < p.size) (hwf : p.WF) :
+    p.fn[n].WFSubst p (.mk _ n v) (.mk _) := by
+  intro m hf ⟨k, hvmk, hnests⟩
+  obtain rfl : n = k := by grind
+  exfalso
+  by_cases h : m = n
+  · subst m
+    exact hwf hnests
+  · exact hwf (nests_iff.mpr ⟨hvmk.1, _, by grind, h, hf, .nests _ hnests⟩)
+
+theorem Program.wfSubst_fn_push {p : Program} {vm : VarMap p.size}
+    {fm : FunMap p.size} {i : Nat} {b : Expr} {t₁ t₂ : Ty} (hi : i < p.size)
+    (hp : p.ValidRefs) (hwf : p.WF) (hwfe : (Expr.fn i).WFSubst p vm fm) :
+    p.fn[i].WFSubst (p.push b t₁ t₂)
+      (vm.update i hi) (fm.update i hi) := by
+  let p' := p.push (.recurse p.size) p.ty[i] p.ret[i]
+  let vm' := vm.update i hi
+  let fm' := fm.update i hi
+  intro k hf ⟨n, hvmn, hnests⟩
+  by_cases k = i
+  · grind
+  · have hn : n < p.size := by grind
+    replace hfmm : fm'.Dom i := by grind
+    replace hnests : n ≻[p] k := by grind
+    replace hf : p.fn[i].Free p k := by grind
+    replace hk : k < p.size := Expr.lt_size_of_free hp (hp hi) hf
+    have hmn : i ≠ n := by
+      intro rfl
+      exfalso
+      exact hwf (nests_iff.mpr ⟨hi, _, hk, ‹k ≠ i›, hf, .nests _ hnests⟩)
+    grind [hwfe (.fn _ hi ‹k ≠ i› hf) ⟨n, by grind, hnests⟩]
+
 theorem Expr.exists_free_subst_var {p : Program} {e : Expr} {vm : VarMap p.size}
-    {fm : FunMap p.size} {n m : Nat} {r : RefKind} (he : e.ValidRefs p)
-    (hwfs : e.WFSubst p vm fm) (hvmn : vm.Dom n)
-    (hnests : n ≻[p] m) (hl : e.Local m r) :
+    {fm : FunMap p.size} {m : Nat} {r : RefKind} (he : e.ValidRefs p)
+    (hwfs : e.WFSubst p vm fm) (hdep : vm.Dep p m) (hl : e.Local m r) :
     ∃ (k : Nat), vm.Dom k ∧ e.Free p k := by
   have hm := he hl
   cases r with
   | var =>
     have hf : e.Free p m := Expr.free_of_localVar hl
-    obtain ⟨hvmm, -⟩ := hwfs hnests hf hvmn
+    obtain ⟨hvmm, -⟩ := hwfs hf hdep
     exact ⟨m, hvmm, hf⟩
   | fn =>
+    obtain ⟨n, hvmn, hnests⟩ := hdep
     obtain ⟨_, k, hk, hne, hf, hnests⟩ := Program.nests_iff.mp hnests
     replace hf := free_of_localFn_of_free _ hne hl hf
     cases hnests with
     | refl _ => exact ⟨n, hvmn, hf⟩
     | nests _ hnests =>
-      obtain ⟨hvmk, -⟩ := hwfs hnests hf hvmn
+      obtain ⟨hvmk, -⟩ := hwfs hf ⟨n, hvmn, hnests⟩
       exact ⟨k, hvmk, hf⟩
 
-def FunMap.StrongProvenance (p : Program) (fm : FunMap p.size)
-    (vm : VarMap p.size) (e e' : Expr) (k : Option Nat) : Prop :=
-  ∀ ⦃m' r⦄ (_ : m' < p.size),
-    e'.Local m' r →
-      ∃ (m : Nat) (_ : m < p.size),
-        ¬fm.Dom m ∧ (∀ k, vm.Dom k → k ⊁[p] m) ∧
-          (e.LocalVar m ∧ vm[m].Local m' r ∨ e.LocalFn m ∧ m' = m ∧ r = .fn) ∨
-          fm[m] = m' ∧ (m = k ∨ e.Local m r ∧ fm.Dom m)
+inductive Expr.Origin (e : Expr) (p : Program) (vm : VarMap p.size)
+    (fm : FunMap p.size) (n : Nat) (r : RefKind) : Prop where
+  | unchanged (hl : e.Local n r) (hndep : ¬vm.Dep p n)
+    (h : r = .var → ¬vm.Dom n)
+  | subst m (hm : vm.Dom m) (hndep : ¬vm.Dep p m)
+    (hlv : e.LocalVar m) (hl : vm[m].Local n r)
+  | mapped m (hm : fm.Dom m) (hmn : fm[m] = n) (hl : e.Local m r)
 
-theorem FunMap.strongProvenance_bin {p : Program} {vm : VarMap p.size}
+def Expr.Provenance (e e' : Expr) (p : Program) (vm : VarMap p.size)
+    (fm : FunMap p.size) : Prop :=
+  ∀ ⦃n r⦄, e'.Local n r → e.Origin p vm fm n r
+
+theorem Expr.provenance_bin {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {k : BinKind} {e₁ e₁' e₂ e₂' : Expr}
-    (hf : fm.StrongProvenance p vm e₁ e₁' none)
-    (he : fm.StrongProvenance p vm e₂ e₂' none) :
-    fm.StrongProvenance p vm (e₁.bin k e₂) (e₁'.bin k e₂') none := by
-  intro n r hn hl
-  cases hl with grind [StrongProvenance, intro Expr.Local]
+    (hf : e₁.Provenance e₁' p vm fm) (he : e₂.Provenance e₂' p vm fm) :
+    (e₁.bin k e₂).Provenance (e₁'.bin k e₂') p vm fm := by
+  grind [Provenance, Origin]
 
-theorem FunMap.strongProvenance_cond {p : Program} {vm : VarMap p.size}
+theorem Expr.provenance_cond {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {c c' et et' ef ef' : Expr}
-    (hc : fm.StrongProvenance p vm c c' none)
-    (het : fm.StrongProvenance p vm et et' none)
-    (hef : fm.StrongProvenance p vm ef ef' none) :
-    fm.StrongProvenance p vm (c.cond et ef) (c'.cond et' ef') none := by
-  intro n r hn hl
-  cases hl with grind [StrongProvenance, intro Expr.Local]
+    (hc : c.Provenance c' p vm fm) (het : et.Provenance et' p vm fm)
+    (hef : ef.Provenance ef' p vm fm) :
+    (c.cond et ef).Provenance (c'.cond et' ef') p vm fm := by
+  grind [Provenance, Origin]
 
-theorem FunMap.strongProvenance_proj {p : Program} {vm : VarMap p.size}
+theorem Expr.provenance_proj {p : Program} {vm : VarMap p.size}
     {fm : FunMap p.size} {e e' : Expr} {i : Fin 2}
-    (he : fm.StrongProvenance p vm e e' none) :
-    fm.StrongProvenance p vm (e.proj i) (e'.proj i) none := by
-  intro n r hn hl
-  cases hl with grind [StrongProvenance, intro Expr.Local]
+    (he : e.Provenance e' p vm fm) :
+    (e.proj i).Provenance (e'.proj i) p vm fm := by
+  grind [Provenance, Origin]
 
-theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
+theorem Expr.provenance_of_prefix_of_extends {p p' : Program}
+    {vm : VarMap p.size} {fm : FunMap p.size} {fm' : FunMap p'.size}
+    {e e' : Expr} (hp : p.ValidRefs) (hpre : p.Prefix p')
+    (hext : fm'.Extends fm) (he : e.ValidRefs p) (h : e.Provenance e' p vm fm) :
+    e.Provenance e' p' vm.extend fm' := by
+  intro n r hl
+  obtain ⟨hl, hnnests⟩ | ⟨k, hvmk, hlv, hl⟩ | ⟨k, hfmk, hkn, hl⟩ := h hl
+  · exact .unchanged hl (by grind) (by grind)
+  · exact .subst k (by grind) (by grind) hl (by grind)
+  · exact .mapped k (by grind) (by grind) hl
+
+theorem Expr.provenance_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
-    (hwf : p.WF) (ho : e.DeepOriginal p fm) (hwfe : e.WFSubst p vm fm) :
+    (ho : e.DeepOriginal p fm) (hwfe : e.WFSubst p vm fm) :
     let ⟨p', e', fm', _⟩ := e.subst p vm fm
-    fm'.StrongProvenance p' vm.extend e e' none := by
+    e.Provenance e' p' vm.extend fm' := by
   fun_induction subst
   next p e vm fm h =>
-    intro n r hn hl
-    have hnnests : ∀ m, vm.Dom m → m ⊁[p] n := by
-      intro m hvmm hnests
+    intro n r hl
+    have hndep : ¬vm.Dep p n := by
+      intro hdep
       obtain ⟨k, hvmk, hf⟩ :=
-        exists_free_subst_var ho.validRefs hwfe hvmm hnests hl
+        exists_free_subst_var ho.validRefs hwfe hdep hl
       have := h k hf
       contradiction
-    have hfmn : ¬fm.Dom n := by
-      intro hfmn
-      obtain ⟨m, hvmm, hnests⟩ := hvalid.nests_of_dom hfmn
-      exact hnnests m hvmm hnests
-    refine ⟨n, hn, Or.inl ⟨hfmn, by grind, ?_⟩⟩
+    refine .unchanged hl (by grind) ?_
     cases r with
-    | var =>
-      have hf := h _ (free_of_localVar hl)
-      exact Or.inl ⟨hl, by simp_all [VarMap.Dom]⟩
-    | fn => exact Or.inr ⟨hl, rfl, rfl⟩
+    | var => grind [h n (free_of_localVar hl)]
+    | fn => simp
   next p vm fm m hvmm =>
-    intro n r hn hl
+    intro n r hl
     simp only [free_in_var_iff, forall_eq, Classical.not_not] at hvmm
     have hm := hvmm.1
-    simp only [getElem?_pos, Option.getD_some, hm] at hl
-    by_cases hfmk : fm.Dom m
-    · refine ⟨m, hm, Or.inr ?_⟩
-      have := hvalid.compat hfmk hvmm
-      grind
-    · refine ⟨m, hm, Or.inl ⟨hfmk, ?_, Or.inl ⟨.var, by grind⟩⟩⟩
-      intro l hvml hnests
-      exact hfmk <| hvalid.dom_of_nests (by grind) hnests hvmm
+    by_cases hfmm : fm.Dom m
+    · obtain ⟨rfl, rfl⟩ := local_var_iff.mp (hvalid.compat hfmm hvmm ▸ hl)
+      exact .mapped m hfmm rfl .var
+    · refine .subst m (by grind) ?_ .var (by grind)
+      rw [VarMap.extend_eq]
+      exact (hfmm <| hvalid.dom_of_dep · hvmm)
   next p vm fm m hf hm hfmm =>
-    intro n r hn hl
+    intro n r hl
     simp only [local_fn_iff] at hl
     obtain ⟨rfl, rfl⟩ := hl
-    exact ⟨m, hm, Or.inr ⟨rfl, Or.inr ⟨.fn, hfmm⟩⟩⟩
+    exact .mapped m hfmm rfl .fn
   next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' ih =>
-    intro m'' r hm' hl
-    simp only [Expr.local_fn_iff, e'] at hl
-    obtain ⟨hr, rfl⟩ := hl
+    intro n r hl
+    obtain ⟨rfl, rfl⟩ := local_fn_iff.mp hl
     have hext : fm₂.Extends fm₁ := by grind [FunMap.valid_update]
-    exact ⟨m, by lia, Or.inr (by grind [hext.eq])⟩
+    exact .mapped m (by grind) (by grind) .fn
   next p vm fm k e₁ e₂ hf p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ ih₁ ih₂ =>
     rw [hs₁] at ih₁
     rw [hs₂] at ih₂
@@ -1141,19 +1229,14 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
     have hp₁ : p₁.ValidRefs := by grind [Program.validRefs_subst]
     have hvalid₂ : p₂.ValidSubst vm.extend fm₂ := by
       grind [Program.validSubst_subst]
-    have he₁' : fm₁.StrongProvenance p₁ vm.extend e₁ e₁' none := by grind
-    have he₂' : fm₂.StrongProvenance p₂ vm.extend e₂ e₂' none := by
-      grind [wfSubst_in_subst, Program.validSubst_subst, Program.subst_wf]
+    have he₁' : e₁.Provenance e₁' p₁ vm.extend fm₁ := by grind
+    have he₂' : e₂.Provenance e₂' p₂ vm.extend fm₂ := by
+      grind [wfSubst_of_prefix_of_extends, Program.partialProvenance_subst,
+        Program.validSubst_subst, Program.subst_wf]
     have hext : fm₂.Extends fm₁ := by grind
-    replace he₁' : fm₂.StrongProvenance p₂ vm.extend e₁ e₁' none := by
-      intro n r hn hl
-      replace hn : n < p₁.size := by grind [validRefs_subst]
-      obtain ⟨m, hm, ⟨hfmm, hnnests, h⟩ | ⟨hfmm, h | ⟨hl, hor⟩⟩⟩ := he₁' hn hl
-      · replace hfmm : ¬fm₂.Dom m := by grind [hvalid₂.nests_of_dom]
-        exact ⟨m, by grind, Or.inl ⟨hfmm, by grind, by grind⟩⟩
-      · contradiction
-      · exact ⟨m, by grind, Or.inr ⟨by grind, Or.inr ⟨hl, by grind⟩⟩⟩
-    exact FunMap.strongProvenance_bin he₁' he₂'
+    replace he₁' : e₁.Provenance e₁' p₂ vm.extend fm₂ := by
+      grind [provenance_of_prefix_of_extends]
+    exact provenance_bin he₁' he₂'
   next p vm fm c et ef hf p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃
       hs₃ ihc ihet ihef =>
     rw [hs₁] at ihc
@@ -1164,35 +1247,23 @@ theorem Expr.strongProvenance_subst {p : Program} {e : Expr}
     have hp₂ : p₂.ValidRefs := by grind [Program.validRefs_subst]
     have hvalid₃ : p₃.ValidSubst vm.extend fm₃ := by
       grind [Program.validRefs_subst, Program.validSubst_subst]
-    have hc' : fm₁.StrongProvenance p₁ vm.extend c c' none := by grind
-    have het' : fm₂.StrongProvenance p₂ vm.extend et et' none := by
-      grind [wfSubst_in_subst, Program.validRefs_subst,
-        Program.validSubst_subst, Program.subst_wf]
-    have hef' : fm₃.StrongProvenance p₃ vm.extend ef ef' none := by
-      grind [wfSubst_in_subst, Program.validRefs_subst,
-        Program.validSubst_subst, Program.subst_wf]
+    have hc' : c.Provenance c' p₁ vm.extend fm₁ := by grind
+    have het' : et.Provenance et' p₂ vm.extend fm₂ := by
+      grind [wfSubst_of_prefix_of_extends, Program.validRefs_subst,
+        Program.partialProvenance_subst, Program.validSubst_subst, Program.subst_wf]
+    have hef' : ef.Provenance ef' p₃ vm.extend fm₃ := by
+      grind [wfSubst_of_prefix_of_extends, Program.validRefs_subst,
+        Program.partialProvenance_subst, Program.validSubst_subst, Program.subst_wf]
     have hext₁ : fm₂.Extends fm₁ := by grind
     have hext₂ : fm₃.Extends fm₂ := by grind
-    replace hc' : fm₃.StrongProvenance p₃ vm.extend c c' none := by
-      intro n r hn hl
-      replace hn : n < p₁.size := by grind [validRefs_subst]
-      obtain ⟨m, hm, ⟨hfmm, hnnests, h⟩ | ⟨hfmm, h | ⟨hl, hor⟩⟩⟩ := hc' hn hl
-      · replace hfmm : ¬fm₃.Dom m := by grind [hvalid₃.nests_of_dom]
-        exact ⟨m, by grind, Or.inl ⟨hfmm, by grind, by grind⟩⟩
-      · contradiction
-      · exact ⟨m, by grind, Or.inr ⟨by grind, Or.inr ⟨hl, by grind⟩⟩⟩
-    replace het' : fm₃.StrongProvenance p₃ vm.extend et et' none := by
-      intro n r hn hl
-      replace hn : n < p₂.size := by grind [validRefs_subst]
-      obtain ⟨m, hm, ⟨hfmm, hnnests, h⟩ | ⟨hfmm, h | ⟨hl, hor⟩⟩⟩ := het' hn hl
-      · replace hfmm : ¬fm₃.Dom m := by grind [hvalid₃.nests_of_dom]
-        exact ⟨m, by grind, Or.inl ⟨hfmm, by grind, by grind⟩⟩
-      · contradiction
-      · exact ⟨m, by grind, Or.inr ⟨by grind, Or.inr ⟨hl, by grind⟩⟩⟩
-    exact FunMap.strongProvenance_cond hc' het' hef'
+    replace hc' : c.Provenance c' p₃ vm.extend fm₃ := by
+      grind [provenance_of_prefix_of_extends]
+    replace het' : et.Provenance et' p₃ vm.extend fm₃ := by
+      grind [provenance_of_prefix_of_extends]
+    exact provenance_cond hc' het' hef'
   next p vm fm e i hf p' e' fm' h hs ih =>
     rw [hs] at ih
-    apply FunMap.strongProvenance_proj
+    apply provenance_proj
     grind
 
 theorem Program.push_wf {p : Program} {b : Expr} {t₁ t₂ : Ty} (hp : p.ValidRefs)
@@ -1207,57 +1278,62 @@ theorem Program.push_wf {p : Program} {b : Expr} {t₁ t₂ : Ty} (hp : p.ValidR
   · replace hn : n < p.size := by lia
     grind [WF]
 
-def Program.WFSubst (p : Program) (vm : VarMap p.size) (fm : FunMap p.size) :
+def Program.Provenance (p : Program) (vm : VarMap p.size) (fm : FunMap p.size) :
     Prop :=
   ∀ ⦃m⦄ (hm : fm.Dom m) (_ : fm[m] < p.size),
-    fm.StrongProvenance p vm p.fn[m] p.fn[fm[m]] m
+    ¬vm.Dom m → p.fn[m].Provenance p.fn[fm[m]] p vm fm
 
-theorem Program.wfSubst_fn_mk {p : Program} {n : Nat} {v : Expr}
-    (hn : n < p.size) (hwf : p.WF) :
-    p.fn[n].WFSubst p (.mk _ n v) (.mk _) := by
-  intro k m hnests hf hvmk
-  obtain rfl : n = k := by grind
-  exfalso
-  by_cases h : m = n
-  · subst m
-    exact hwf hnests
-  · exact hwf (nests_iff.mpr ⟨hvmk.1, _, by grind, h, hf, .nests _ hnests⟩)
+theorem Program.provenance_mk {p : Program} {n : Nat} {v : Expr} :
+    p.Provenance (.mk _ n v) (.mk _) := by
+  grind [WF, Provenance]
 
-theorem Program.wfSubst_mk {p : Program} {n : Nat} {v : Expr} :
-    p.WFSubst (.mk _ n v) (.mk _) := by
-  grind [WF, WFSubst]
+theorem Expr.partialProvenance_of_provenance {p : Program} {e e' : Expr}
+    {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
+    (hfm : fm.Valid) (hvalid : p.ValidSubst vm fm) (ho : e.Original fm)
+    (h : e.Provenance e' p vm fm) : e.PartialProvenance e' fm := by
+  intro m r hfmm hl
+  obtain ⟨hl, hndep, h⟩ | ⟨k, hvmk, hndep, hlv, hl⟩ | ⟨k, hfmk, hkm, hl⟩ := h hl
+  · grind [ho hl]
+  · have hfmk : ¬fm.Dom k := fun hfmk => hndep (hvalid.dep_of_dom hfmk)
+    grind [hvm.original hvmk hfmk hl]
+  · exact hfm.inj hfmk hfmm hkm ▸ hl
 
-theorem Program.wfSubst_push_recurse {p : Program} {vm : VarMap p.size}
-    {fm : FunMap p.size} (hfm : fm.Valid) (hp : p.ValidRefs) {l i : Nat}
-    (hi : i < p.size) (hvml : vm.Dom l) (hfmi : ¬fm.Dom i) (hnestsi : l ≻[p] i)
-    (hwfs : p.WFSubst vm fm) :
-    (p.push (.recurse p.size) p.ty[i] p.ret[i]).WFSubst
+theorem Program.partialProvenance_of_provenance {p : Program}
+    {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
+    (hfm : fm.Valid) (hvalid : p.ValidSubst vm fm) (h : p.Provenance vm fm) :
+    p.PartialProvenance vm fm := by
+  intro m hfmm hm' hvmm
+  exact Expr.partialProvenance_of_provenance hvm hfm hvalid
+    (hvalid.original_of_dom hfmm) (h hfmm hm' hvmm)
+
+theorem Program.provenance_push_recurse {p : Program} {vm : VarMap p.size}
+    {fm : FunMap p.size} {i : Nat} (hi : i < p.size) (hfm : fm.Valid)
+    (hp : p.ValidRefs) (hfmi : ¬fm.Dom i) (hdep : vm.Dep p i)
+    (hwfs : p.Provenance vm fm) :
+    (p.push (.recurse p.size) p.ty[i] p.ret[i]).Provenance
       (vm.update i hi) (fm.update i hi) := by
-  intro m hfmm hm'
+  intro m hfmm hm' hvmm
   by_cases m = p.size
   · grind
   · replace hm : m < p.size := by grind
     by_cases i = m
-    · intro n r hn hlc
+    · intro n r hlc
       grind
-    · intro n r hn hlc
+    · intro n r hlc
       replace hm' : fm[m] < p.size := by grind
       replace hn : n < p.size := by grind
-      obtain ⟨k, hk, ⟨hvmk, hnnests, hlc⟩ | ⟨hfmk, heq | ⟨hlc, h⟩⟩⟩ :=
-        hwfs (by grind) hm' hn (by simpa [*] using hlc)
-      · have : i ≠ k := by grind
-        exact ⟨k, by lia, Or.inl ⟨by grind, by grind, by simp [*]⟩⟩
-      · grind
-      · have : i ≠ k := by grind
-        exact ⟨k, by lia, by grind⟩
+      obtain ⟨hl, hnnests, h⟩ | ⟨k, hvmk, hnnests, hlv, hl⟩ | ⟨k, hfmk, hkn, hl⟩ :=
+        hwfs (by grind) hm' (by grind) (by simpa [*] using hlc)
+      · exact .unchanged (by grind) (by grind) (by grind)
+      · exact .subst k (by grind) (by grind) (by grind) (by grind)
+      · exact .mapped k (by grind) (by grind) (by grind)
 
-theorem Program.wfSubst_subst {p : Program} {e : Expr}
-    {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid)
-    (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm) (hwf : p.WF)
-    (ho : e.DeepOriginal p fm) (hwfs : p.WFSubst vm fm)
-    (hwfe : e.WFSubst p vm fm) :
+theorem Program.provenance_subst {p : Program} {e : Expr} {vm : VarMap p.size}
+    {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
+    (hvalid : p.ValidSubst vm fm) (hwf : p.WF) (ho : e.DeepOriginal p fm)
+    (hwfs : p.Provenance vm fm) (hwfe : e.WFSubst p vm fm) :
     let ⟨p', _, fm', _⟩ := e.subst p vm fm
-    p'.WFSubst vm.extend fm' := by
+    p'.Provenance vm.extend fm' := by
   fun_induction Expr.subst <;> try simpa using hwfs
   next p vm fm m hf hm hfmm m' vm₁ fm₁ p₁ p₂ f' fm₂ h₂ hs₂ p₃ e' ih =>
     rw [hs₂] at ih
@@ -1267,30 +1343,18 @@ theorem Program.wfSubst_subst {p : Program} {e : Expr}
     have hnestsm : l ≻[p] m := by
       replace .fn _ hm hne hf := hf
       exact .free _ _ hvml.1 hm hne hf
+    have hdep : vm.Dep p m := ⟨l, hvml, hnestsm⟩
     obtain ⟨hom, hm, ho⟩ := Expr.deepOriginal_fn_iff.mp ho
     have ho' : p.fn[m].DeepOriginal p₁ fm₁ := by grind
     have hvm₁ : vm₁.Valid fm₁ := VarMap.valid_update hm hvm hfm
     have hfm₁ : fm₁.Valid := FunMap.valid_update hm hom hfm
     have hp₁ : p₁.ValidRefs := validRefs_push hp (by grind)
     have hvalid₁ : p₁.ValidSubst vm₁ fm₁ :=
-      validSubst_push_recurse hm hfm hp hvml hnestsm hvalid
+      validSubst_push_recurse hm hfm hp hdep ho.1 hvalid
     have hwf₁ : p₁.WF := push_wf hp hwf
-    have hwfs₁ : p₁.WFSubst vm₁ fm₁ :=
-      wfSubst_push_recurse hfm hp hm hvml hfmm hnestsm hwfs
-    have hwfsm : p.fn[m].WFSubst p₁ vm₁ fm₁ := by
-      intro n k hnests hf hvmn
-      by_cases m = k
-      · grind
-      · have hn : n < p.size := by grind
-        replace hfmm : fm₁.Dom m := by grind
-        replace hnests : n ≻[p] k := by grind
-        replace hf : p.fn[m].Free p k := by grind
-        replace hk : k < p.size := Expr.lt_size_of_free hp (hp hm) hf
-        have hmn : m ≠ n := by
-          intro rfl
-          exfalso
-          exact hwf (nests_iff.mpr ⟨hm, _, hk, ‹m ≠ k›.symm, hf, .nests _ hnests⟩)
-        grind [hwfe hnests (.fn _ hm ‹m ≠ k›.symm hf) (by grind)]
+    have hwfs₁ : p₁.Provenance vm₁ fm₁ :=
+      provenance_push_recurse hm hfm hp hfmm hdep hwfs
+    have hwfsm : p.fn[m].WFSubst p₁ vm₁ fm₁ := wfSubst_fn_push hm hp hwf hwfe
     have hwfs₂ := ih hvm₁ hfm₁ hp₁ hvalid₁ hwf₁ ho' hwfs₁ hwfsm
     have hext₂ : fm₂.Extends fm₁ := by grind
     have hfm₂ : fm₂.Valid := hext₂.valid
@@ -1298,7 +1362,7 @@ theorem Program.wfSubst_subst {p : Program} {e : Expr}
     have hfmm' : fm₂[m'] = m' := by grind
     have hpre₂ : p.Prefix p₂ := prefix_trans prefix_push h₂.pre
     have hpre₃ : p.Prefix p₃ := by grind
-    intro n hfmn hn'
+    intro n hfmn hn' hvmn
     replace hn : n < p.size := by
       false_or_by_contra
       have hn' : p₁.size ≤ n := by grind
@@ -1309,61 +1373,54 @@ theorem Program.wfSubst_subst {p : Program} {e : Expr}
       have hfm₂ : fm₂ = (p.fn[m].subst p₁ vm₁ fm₁).funMap := by grind
       subst fm₂
       exact hfm₂.not_dom_map (by grind) (hfmk ▸ hfmn)
+    have hfmm : fm₂.Dom m := by grind
     by_cases m = n
     · subst n
       simp only [ne_eq, show m' ≠ m by lia, not_false_eq_true, Vector.getElem_set_ne,
         Vector.getElem_set_self, p₃, hmm']
-      have hf' := Expr.strongProvenance_subst hvm₁ hfm₁ hp₁ hvalid₁ hwf₁ ho' hwfsm
+      have hf' := Expr.provenance_subst hvm₁ hfm₁ hp₁ hvalid₁ ho' hwfsm
       rw [hs₂] at hf'
       dsimp only at hf'
       rw [show p₂.fn[m] = p.fn[m] by grind]
-      intro k r hk hlc
-      obtain ⟨l, hl', ⟨hll', hnnests, h⟩ | ⟨hfml, h | ⟨hlc, h⟩⟩⟩ := hf' hk hlc
-      · have hl : l < p.size := by grind
-        by_cases m = l
-        · exact ⟨m, by lia, Or.inr (by grind)⟩
-        · exact ⟨l, hl', Or.inl ⟨hll', by grind, by grind⟩⟩
-      · contradiction
-      · exact ⟨l, hl', Or.inr ⟨hfml, Or.inr ⟨hlc, h⟩⟩⟩
+      intro k r hlc
+      obtain ⟨hlc, hnnests, h⟩ | ⟨l, hvml, hnnests, hlv, hlc⟩ | ⟨l, hfml, hlk, hlc⟩ := hf' hlc
+      · exact .unchanged hlc (by grind) (by grind)
+      · by_cases m = l
+        · exact .mapped m hfmm (by grind) (by grind)
+        · exact .subst l (by grind) (by grind) (by grind) (by grind)
+      · exact .mapped l hfml hlk hlc
     · have : m' ≠ n := by grind
       have : m' ≠ fm₂[n] := by
         intro h
-        have := hfm₂.inj (by grind) hfmn (hmm' ▸ h)
+        have := hfm₂.inj hfmm hfmn (hmm' ▸ h)
         contradiction
       simp only [ne_eq, not_false_eq_true, Vector.getElem_set_ne, p₃, *]
-      intro k r hk hlc
-      obtain ⟨l, hl, ⟨hmm', hnnests, h⟩ | ⟨hfml, h | ⟨hlc, h⟩⟩⟩ :=
-        hwfs₂ hfmn (by lia) hk hlc
-      · by_cases m = l
-        · exact ⟨m, by lia, Or.inr (by grind)⟩
-        · have : vm₁.extend[l] = vm.extend[l] := by
-            simp only [vm₁]
-            by_cases hl' : l < p.size
-            · simp [show l < p.size + 1 by lia, *]
-            · simp only [Nat.not_lt] at hl'
-              by_cases l = p.size
-              · simp [*]
-              · simp [show p.size + 1 ≤ l by lia, *]
-          rw [this] at h
-          exact ⟨l, hl, Or.inl ⟨hmm', by grind, h⟩⟩
-      · grind
-      · grind
-  next p vm fm k e₁ e₂ p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ h ih₁ ih₂ =>
-    grind [validRefs_subst, validSubst_subst, subst_wf, Expr.wfSubst_in_subst]
-  next p vm fm c et ef p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃ hs₃
-      hf ihc ihet ihef =>
-    grind [validRefs_subst, validSubst_subst, subst_wf, Expr.wfSubst_in_subst]
+      intro k r hlc
+      obtain ⟨hlc, hnnests, h⟩ | ⟨l, hvml, hnnests, hlv, hlc⟩ | ⟨l, hfml, hlk, hlc⟩ :=
+        hwfs₂ hfmn (by lia) (by grind) hlc
+      · exact .unchanged hlc (by grind) (by grind)
+      · have : m ≠ l := by grind
+        exact .subst l (by grind) (by grind) hlv (by grind)
+      · exact .mapped l hfml hlk hlc
+  next p vm fm k e₁ e₂ hf p₁ e₁' fm₁ h₁ hs₁ p₂ e₂' fm₂ h₂ hs₂ ih₁ ih₂ =>
+    grind [validRefs_subst, partialProvenance_of_provenance, validSubst_subst,
+      subst_wf, Expr.wfSubst_of_prefix_of_extends]
+  next p vm fm c et ef hf p₁ c' fm₁ h₁ hs₁ vm₁ p₂ et' fm₂ h₂ hs₂ p₃ ef' fm₃ h₃
+      hs₃ ihc ihet ihef =>
+    grind [validRefs_subst, partialProvenance_of_provenance, validSubst_subst,
+      subst_wf, Expr.wfSubst_of_prefix_of_extends]
   next => grind
 
 theorem Program.free_in_fn_of_free_in_subst {p : Program} {e : Expr}
     {vm : VarMap p.size} {fm : FunMap p.size} (hvm : vm.Valid fm)
     (hfm : fm.Valid) (hp : p.ValidRefs) (hvalid : p.ValidSubst vm fm)
-    (hwf : p.WF) (hwfs : p.WFSubst vm fm) (ho : e.DeepOriginal p fm)
+    (hwf : p.WF) (hwfs : p.Provenance vm fm) (ho : e.DeepOriginal p fm)
     (hwfe : e.WFSubst p vm fm) {n' m : Nat} (hm : m < p.size) :
     let (eq := hs) ⟨p', _, fm', _⟩ := e.subst p vm fm
     fm'.Dom m → n' ≠ fm'[m] → p'.fn[fm'[m]].Free p' n' →
+      (p.fn[m].Free p n' ∧ ¬vm.Dep p n' ∧ ¬vm.Dom n') ∨
       ∃ (n : Nat) (hf : p.fn[m].Free p n),
-          (¬fm'.Dom n ∧ vm[n].Free p n' ∨ fm'[n] = n' ∧ fm'.Dom n) := by
+        n ≠ m ∧ (vm.Dom n ∧ vm[n].Free p n' ∨ fm'.Dom n ∧ fm'[n] = n') := by
   intro hfmm hne hf
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
@@ -1371,127 +1428,127 @@ theorem Program.free_in_fn_of_free_in_subst {p : Program} {e : Expr}
   have hp' : p'.ValidRefs := validRefs_subst hvm hfm hp ho
   have hvalid' : p'.ValidSubst vm.extend fm' :=
     validSubst_subst hvm hfm hp hvalid ho
-  have hwfs' : p'.WFSubst vm.extend fm' :=
-    wfSubst_subst hvm hfm hp hvalid hwf ho hwfs hwfe
+  have hwfs' : p'.Provenance vm.extend fm' :=
+    provenance_subst hvm hfm hp hvalid hwf ho hwfs hwfe
   obtain ⟨k', hk', hlv, hpath⟩ := (free_in_fn_iff _ hne).mp hf
   generalize hmm' : fm'[m] = m' at hpath
   induction hpath generalizing m with
   | refl m' hne =>
-    have hn' : n' < p'.size := by grind
     replace hlv : p'.fn[fm'[m]].LocalVar n' := by grind
-    obtain ⟨n, hn, ⟨hnn', hvmn, ⟨hlv, hlc⟩ | h⟩ | ⟨hfmn, h | ⟨hlc, hnn'⟩⟩⟩ :=
-      hwfs' hfmm (by grind) hn' hlv
-    · rw [prefix_subst.fn_eq hm] at hlv
-      replace hn : n < p.size := hp hm hlv
-      simp only [hn, VarMap.getElem_extend_lt] at hlc
-      exact ⟨n, Expr.free_of_localVar hlv,
-        Or.inl ⟨hnn', Expr.free_of_localVar hlc⟩⟩
-    · grind
-    · grind
+    have hvmm : ¬(vm.extend (n' := p'.size)).Dom m := by
+      grind [hvalid'.eq_of_local, hfm'.inj]
+    obtain ⟨hlc, hnnests, h⟩ | ⟨n, hvmn, hnnests, hlv, hlc⟩ | ⟨n, hfmn, hnn', hlc⟩ :=
+      hwfs' hfmm (by grind) hvmm hlv
     · rw [prefix_subst.fn_eq hm] at hlc
-      replace hn : n < p.size := hp hm hlc
-      exact ⟨n, Expr.free_of_localVar hlc, Or.inr ⟨hfmn, hnn'⟩⟩
+      exact .inl ⟨Expr.free_of_localVar hlc, by grind [hvalid'.dep_of_dom], by grind⟩
+    · rw [prefix_subst.fn_eq hm] at hlv
+      simp only [hp hm hlv, VarMap.getElem_extend_lt] at hlc
+      have hfmn : ¬fm'.Dom n := by grind [hvalid'.dep_of_dom]
+      exact .inr ⟨n, Expr.free_of_localVar hlv, by grind,
+        .inl ⟨by grind, Expr.free_of_localVar hlc⟩⟩
+    · rw [prefix_subst.fn_eq hm] at hlc
+      exact .inr ⟨n, Expr.free_of_localVar hlc, by grind, .inr ⟨hfmn, hnn'⟩⟩
   | step m' l' k' hne hs hpath ih =>
-    obtain ⟨_, hlf⟩ := hs
-    have hl' : l' < p'.size := by grind
-    replace hlf : p'.fn[fm'[m]].LocalFn l' := by grind
-    obtain ⟨l, hl, ⟨hll', hnnests, ⟨hlvm, hlf⟩ | ⟨hlf, rfl, -⟩⟩ | ⟨rfl, h | ⟨hlf, hfml⟩⟩⟩ :=
-      hwfs' hfmm (by grind) hl' hlf
-    · replace hl : l < p.size := by grind
-      replace hlf : vm[l].LocalFn l' := by grind
-      replace hl' : l' < p.size := by grind
-      replace hk' : k' < p.size := by grind
-      replace hpath : l' ⟶[p, n']* k' := by grind
-      rw [prefix_subst.fn_eq hm] at hlvm
-      rw [prefix_subst.fn_eq hk'] at hlv
-      exact ⟨l, Expr.free_of_localVar hlvm,
-        Or.inl ⟨hll', Expr.free_iff.mpr (Or.inr ⟨l', k', hk', hlf, hpath, hlv⟩)⟩⟩
-    · replace hl' : l' < p.size := by grind
-      replace hk' : k' < p.size := by grind
-      have hn' : n' < p.size := by grind
-      have hne := hpath.ne_start
-      have hfmn : ¬fm'.Dom n' := by
-        intro hfmn
-        obtain ⟨n, hvmn, hnests⟩ := hvalid'.nests_of_dom hfmn
-        refine hnnests n hvmn
-          (.trans _ _ _ hnests (.free _ _ (by grind) (by lia) hne ?_))
-        exact (free_in_fn_iff (by lia) hne).mpr ⟨_, ‹_›, hlv, hpath⟩
-      replace hpath : l' ⟶[p, n']* k' := by grind
-      rw [prefix_subst.fn_eq hm] at hlf
-      rw [prefix_subst.fn_eq hk'] at hlv
-      have hne := hpath.ne_start
-      replace hf : p.fn[l'].Free p n' :=
-        (free_in_fn_iff hl' hne).mpr ⟨_, hk', hlv, hpath⟩
-      have hvmn' : vm[n'] = .var n' := by
-        false_or_by_contra
-        rename_i hvmn'
-        replace hvmn' : vm.Dom n' := ⟨_, hvmn'⟩
-        grind [Nests.free _ _ hn' hl' hne hf]
-      exact ⟨n', free_in_fn_of_succ hl' hne ⟨hm, hlf⟩ hf,
-        Or.inl ⟨hfmn, hvmn' ▸ .var⟩⟩
-    · grind
-    · rw [prefix_subst.fn_eq hm] at hlf
-      replace hl : l < p.size := by grind
-      replace hne := hpath.ne_start
-      replace hf := (free_in_fn_iff hl' hne).mpr ⟨k', hk', hlv, hpath⟩
-      obtain ⟨n, hf, h⟩ := ih hl hfml hne hf hk' hlv rfl
-      exact ⟨n, free_in_fn_of_succ hl (by grind) ⟨hm, hlf⟩ hf, h⟩
+    obtain ⟨_, hlf'⟩ := hs
+    replace hlf' : p'.fn[fm'[m]].LocalFn l' := by grind
+    by_cases hvmm : (vm.extend (n' := p'.size)).Dom m
+    · grind [hvalid'.eq_of_local]
+    · obtain ⟨hlc, hnnests, h⟩ | ⟨l, hvml, hnnests, hlvm, hlc⟩ | ⟨l, hfml, rfl, hlf⟩ :=
+        hwfs' hfmm (by grind) hvmm hlf'
+      · rw [prefix_subst.fn_eq hm] at hlc
+        replace hl' : l' < p.size := by grind
+        replace hpath : l' ⟶[p, n']* k' := by grind
+        replace hk' : k' < p.size := by grind
+        rw [prefix_subst.fn_eq hk'] at hlv
+        have hne' := hpath.ne_start
+        have hf' := (free_in_fn_iff hl' hne').mpr ⟨_, hk', hlv, hpath⟩
+        have hnests := Nests.free n' _ (by grind) hl' hne' hf'
+        have hf := Expr.free_iff.mpr (.inr ⟨_, _, hk', hlc, hpath, hlv⟩)
+        exact .inl ⟨hf, by grind [hvalid'.dep_of_dom], by grind⟩
+      · replace hl : l < p.size := by grind
+        replace hlf : vm[l].LocalFn l' := by grind
+        replace hl' : l' < p.size := by grind
+        replace hk' : k' < p.size := by grind
+        replace hpath : l' ⟶[p, n']* k' := by grind
+        rw [prefix_subst.fn_eq hm] at hlvm
+        rw [prefix_subst.fn_eq hk'] at hlv
+        exact .inr ⟨l, Expr.free_of_localVar hlvm, by grind,
+          Or.inl ⟨by grind, Expr.free_iff.mpr (Or.inr ⟨l', k', hk', hlf, hpath, hlv⟩)⟩⟩
+      · have hl : l < p.size := by grind
+        rw [prefix_subst.fn_eq hm] at hlf
+        have hne' := hpath.ne_start
+        have hf' := (free_in_fn_iff (by grind) hne').mpr ⟨_, hk', hlv, hpath⟩
+        obtain ⟨hf, hndep, hvmn'⟩ | ⟨n, hf, hne, h⟩ :=
+          ih (by grind) hfml hne' hf' hk' hlv rfl
+        · have hne : n' ≠ l := by grind [hvalid'.dep_of_dom]
+          exact .inl ⟨free_in_fn_of_succ hl hne ⟨hm, hlf⟩ hf, hndep, hvmn'⟩
+        · exact .inr ⟨n, Expr.free_of_localFn_of_free hl hne hlf hf, by grind, h⟩
 
 theorem Expr.free_of_free_in_subst {p : Program} {e : Expr} {vm : VarMap p.size}
     {fm : FunMap p.size} (hvm : vm.Valid fm) (hfm : fm.Valid) (hp : p.ValidRefs)
-    (hvalid : p.ValidSubst vm fm) (hwf : p.WF) (hwfs : p.WFSubst vm fm)
+    (hvalid : p.ValidSubst vm fm) (hwf : p.WF) (hwfs : p.Provenance vm fm)
     (ho : e.DeepOriginal p fm) (hwfe : e.WFSubst p vm fm)
     {n' : Nat} :
-    let ⟨p', e', fm', h⟩ := e.subst p vm fm
-    e'.Free p' n' → ∃ (n : Nat) (hf : e.Free p n),
-      (¬fm'.Dom n ∧ vm[n].Free p n' ∨ fm'[n] = n' ∧ fm'.Dom n) := by
+    let ⟨p', e', _, _⟩ := e.subst p vm fm
+    e'.Free p' n' → e.Free p n' ∧ ¬vm.Dom n' ∨
+      ∃ (n : Nat) (hf : e.Free p n), vm.Dom n ∧ vm[n].Free p n' := by
   intro hf
   let p' := (e.subst p vm fm).program
   let e' := (e.subst p vm fm).expr
   let fm' := (e.subst p vm fm).funMap
-  have hfm' : fm'.Valid := FunMap.valid_subst hfm ho
+  have hext : fm'.Extends fm := FunMap.extends_subst hfm ho
+  have hfm' : fm'.Valid := hext.valid
   have hvalid' : p'.ValidSubst vm.extend fm' :=
     Program.validSubst_subst hvm hfm hp hvalid ho
   have he' : e'.ValidRefs p' := validRefs_subst hvm hfm ho
   obtain hlv | ⟨m', k', hk', hlf, hpath, hlv⟩ := free_iff.mp hf
   · have hn' : n' < p'.size := by grind
-    obtain ⟨n, hn, ⟨hfmn, hnnests, ⟨hlv, hl⟩ | ⟨-, -, h⟩⟩ | ⟨hfmn, h | ⟨hlv, hnn'⟩⟩⟩ :=
-      strongProvenance_subst hvm hfm hp hvalid hwf ho hwfe hn' hlv
-    · exact ⟨n, free_of_localVar hlv,
-        Or.inl ⟨hfmn, free_of_localVar (by grind)⟩⟩
-    · contradiction
-    · contradiction
-    · exact ⟨n, free_of_localVar hlv, Or.inr ⟨hfmn, hnn'⟩⟩
+    obtain ⟨hl, hnnests, h⟩ | ⟨n, hvmn, hnnests, hlv, hl⟩ | ⟨n, hfmn, hnn', hl⟩ :=
+      provenance_subst hvm hfm hp hvalid ho hwfe hlv
+    · have hfmn' : ¬fm'.Dom n' := by grind [hvalid'.dep_of_dom]
+      have hvmn' : vm[n'] = .var n' := by grind [VarMap.Dom]
+      exact .inl ⟨free_of_localVar hl, by grind⟩
+    · exact .inr ⟨n, free_of_localVar hlv, by grind, free_of_localVar (by grind)⟩
+    · refine .inr ⟨n, free_of_localVar hl, ?_⟩
+      have hdep := (VarMap.dep_in_prefix_iff hp (by grind) (by grind)).mp <|
+        hvalid'.dep_of_dom hfmn
+      obtain ⟨hvmn, hfmn⟩ := hwfe (free_of_localVar hl) hdep
+      have := hvalid.compat hfmn hvmn
+      rw [hext.eq hfmn] at hnn'
+      exact ⟨hvmn, this ▸ hnn' ▸ .var⟩
   · have hm' : m' < p'.size := by grind
-    have hne := hpath.ne_start
-    replace hf' := (Program.free_in_fn_iff hm' hne).mpr ⟨_, hk', hlv, hpath⟩
-    obtain ⟨m, hm, ⟨hfmm, hnnests, h⟩ | ⟨rfl, h | ⟨hlf, hmm'⟩⟩⟩ :=
-      strongProvenance_subst hvm hfm hp hvalid hwf ho hwfe hm' hlf
-    · replace hm : m < p.size := by grind
-      replace hm' : m' < p.size := by grind
-      obtain ⟨hlv, hlc⟩ | ⟨hlf, rfl, -⟩ := h
-      · refine ⟨m, free_of_localVar hlv, Or.inl ⟨hfmm, ?_⟩⟩
-        exact free_of_localFn_of_free hm' hne (by grind) (by grind)
-      · have hn' : n' < p.size := by grind
-        have hfmn : ¬fm'.Dom n' := by
-          intro hfmn
-          obtain ⟨n, hvmn, hnests⟩ := hvalid'.nests_of_dom hfmn
-          refine hnnests n hvmn
-            (.trans _ _ _ hnests (.free _ _ (by grind) (by lia) hne ?_))
-          exact (Program.free_in_fn_iff (by lia) hne).mpr ⟨_, ‹_›, hlv, hpath⟩
-        have hvmn' : vm[n'] = .var n' := by
-          false_or_by_contra
-          rename_i hvmn'
-          replace hvmn' : vm.Dom n' := ⟨hn', hvmn'⟩
-          exact hnnests n' (by grind) (.free _ _ (by grind) (by lia) hne hf')
-        exact ⟨n', free_of_localFn_of_free hm' hne hlf (by grind),
-          Or.inl ⟨hfmn, hvmn' ▸ Free.var⟩⟩
-    · contradiction
-    · replace hm : m < p.size := by grind
-      obtain ⟨n, hf, h⟩ :=
+    have hne' := hpath.ne_start
+    replace hf' := (Program.free_in_fn_iff hm' hne').mpr ⟨_, hk', hlv, hpath⟩
+    obtain ⟨hl, hnnests, h⟩ | ⟨m, hvmm, hnnests, hlv, hl⟩ | ⟨m, hfmm, rfl, hl⟩ :=
+      provenance_subst hvm hfm hp hvalid ho hwfe hlf
+    · replace hm' : m' < p.size := ho.validRefs hl
+      replace hpath : m' ⟶[p, n']* k' := by grind
+      replace hk' : k' < p.size := by grind
+      rw [Program.prefix_subst.fn_eq hk'] at hlv
+      have hn' : n' < p.size := by grind
+      have hf := (Program.free_in_fn_iff hm' hne').mpr ⟨_, hk', hlv, hpath⟩
+      have hnests := Program.Nests.free _ _ hn' _ hne' hf
+      have hvmn' : ¬vm.Dom n' := by grind
+      exact .inl ⟨free_of_localFn_of_free hm' hne' hl hf, hvmn'⟩
+    · replace hm' : m' < p.size := by grind
+      replace hf' : p.fn[m'].Free p n' := by grind
+      have hfmm : ¬fm'.Dom m := by grind [hvalid'.dep_of_dom]
+      exact .inr ⟨m, free_of_localVar hlv, by grind,
+        free_of_localFn_of_free hm' hne' (by grind) hf'⟩
+    · have hm := ho.validRefs hl
+      obtain ⟨hf, hndep, hvmn'⟩ | ⟨n, hf, hne, ⟨hvmn, hfvm⟩ | ⟨hfmn, hnn'⟩⟩ :=
         Program.free_in_fn_of_free_in_subst hvm hfm hp hvalid hwf hwfs ho hwfe
-        hm hmm' hne hf'
-      exact ⟨n, free_of_localFn_of_free hm (by grind) hlf hf, h⟩
+        hm hfmm hne' hf'
+      · have hne : n' ≠ m := by grind [hvalid'.dep_of_dom]
+        exact .inl ⟨free_of_localFn_of_free hm hne hl hf, hvmn'⟩
+      · exact .inr ⟨n, free_of_localFn_of_free hm hne hl hf, hvmn, hfvm⟩
+      · have hdep := (VarMap.dep_in_prefix_iff hp (by grind) (by grind)).mp <|
+          hvalid'.dep_of_dom hfmn
+        have hf := free_of_localFn_of_free hm hne hl hf
+        obtain ⟨hvmn, hfmn⟩ := hwfe hf hdep
+        have := hvalid.compat hfmn hvmn
+        rw [hext.eq hfmn] at hnn'
+        exact .inr ⟨n, hf, hvmn, this ▸ hnn' ▸ .var⟩
 
 public section
 
@@ -1508,36 +1565,20 @@ theorem Computation.free_of_free_in_subst {c : Computation} {n m : Nat}
   have hfm : fm.Valid := FunMap.valid_mk
   have hvalid : p.ValidSubst vm fm := Program.validSubst_mk hwf
   have ho := Expr.deepOriginal_mk hp he
-  have hnnests : ∀ k, e.Free p k → n ⊁[p] k := by
-    intro k hf hnests
-    cases hwfe _ hf with
-    | refl _ => exact hwf hnests
-    | nests _ h => exact hwf (.trans _ _ _ hnests h)
-  have hwfs : e.WFSubst p vm fm := by
-    intro k l hnests hf h
-    have : n ≠ k := by
-      intro rfl
-      exact hnnests _ hf hnests
-    grind
+  have hwfs : e.WFSubst p vm fm := Expr.wfSubst_mk hwf hwfe
   let p' := (e.subst p vm fm).program
   let fm' := (e.subst p vm fm).funMap
   have hvalid' : p'.ValidSubst vm.extend fm' :=
     Program.validSubst_subst hvm hfm hp hvalid ho
-  obtain ⟨k, hf, ⟨hkk', hf'⟩ | ⟨hfmk, hne⟩⟩ :=
-    Expr.free_of_free_in_subst hvm hfm hp hvalid hwf Program.wfSubst_mk ho hwfs hf
-  · by_cases n = k
-    · subst k
-      simp only [VarMap.mk, Vector.getElem_setIfInBounds_self, vm] at hf'
-      exact Or.inr hf'
-    · simp only [VarMap.mk, ne_eq, not_false_eq_true, Vector.getElem_setIfInBounds_ne,
-        Vector.getElem_ofFn, Expr.free_in_var_iff, vm, *] at hf'
-      exact Or.inl ⟨hf' ▸ hf, hf' ▸ ‹n ≠ k›.symm⟩
-  · have hfmk : ¬fm'.Dom k := by
-      intro hfmk
-      obtain ⟨l, hvml, hnests⟩ := hvalid'.nests_of_dom hfmk
-      replace hnests : n ≻[p] k := by grind
-      exact hnnests _ hf hnests
-    contradiction
+  obtain ⟨hf, hvmm⟩ | ⟨k, hf, hvmk, hfvm⟩ :=
+    Expr.free_of_free_in_subst hvm hfm hp hvalid hwf Program.provenance_mk ho hwfs hf
+  · by_cases hmn : m = n
+    · subst m
+      have : vm[n] = .var n := by grind [VarMap.Dom]
+      simp only [VarMap.mk, Vector.getElem_setIfInBounds_self, vm] at this
+      exact .inr (this ▸ .var)
+    · exact .inl ⟨hf, hmn⟩
+  · grind
 
 theorem Computation.subst_types {c : Computation} {t : Ty} {n : Nat} {v : Expr}
     (hn : n < c.size) (ht : ⊢ c : t) (hv : c.toProgram ⊢ v : c.ty[n]) :
@@ -1552,7 +1593,8 @@ theorem Computation.subst_wf {c : Computation} {n : Nat} {v : Expr}
     (hv : v.ValidRefs c.toProgram) (h : c.WF) :
     (c.subst n v).WF :=
   Program.subst_wf (VarMap.valid_mk hv) FunMap.valid_mk hp
-    (Program.validSubst_mk h) (Expr.deepOriginal_mk hp he) h
+    Program.partialProvenance_mk (Program.validSubst_mk h)
+    (Expr.deepOriginal_mk hp he) h
 
 /--
 Substitution preserves types and well-formedness.
