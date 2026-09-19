@@ -7,3 +7,4 @@ public import Mean.Basic
 public import Mean.Nest
 public import Mean.Subst
 public import Mean.Step
+public import Mean.Syntax
