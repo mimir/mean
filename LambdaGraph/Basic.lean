@@ -163,6 +163,18 @@ abbrev Program.setBody (p : Program) (i : Nat) (b : Expr)
     (hi : i < p.size := by get_elem_tactic) : Program :=
   { p with fn := p.fn.set i b }
 
+/--
+Constructs a program from a list of functions.
+
+Each function is represented as a tuple of argument type, return type, and body.
+-/
+def Program.ofList (l : List (Ty × Ty × Expr)) : Program :=
+  aux ⟨0, ⟨#[], rfl⟩, ⟨#[], rfl⟩, ⟨#[], rfl⟩⟩ l
+  where
+    aux (p : Program)
+      | [] => p
+      | (t₁, t₂, e) :: fns => aux (p.push e t₁ t₂) fns
+
 /-- Extending a program at the end keeps the old program as a prefix. -/
 structure Program.Prefix (p p' : Program) where
   size_le : p.size ≤ p'.size
