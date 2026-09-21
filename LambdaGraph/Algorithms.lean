@@ -6,6 +6,134 @@ public import Std.Data.HashSet.Basic
 import LambdaGraph.Finset
 public import LambdaGraph.Nest
 
+public section
+
+def Expr.ty (p : Program) : Expr → Option Ty
+  | var n => if _ : n < p.size then p.ty[n] else none
+  | fn n => if _ : n < p.size then p.ty[n].fn p.ret[n] else none
+  | const c => c.ty
+  | bin .app e₁ e₂ => do
+    let .fn t₁ t₂ ← e₁.ty p | none
+    let t₁' ← e₂.ty p
+    guard <| t₁ = t₁'
+    t₂
+  | bin .pair e₁ e₂ => do
+    let t₁ ← e₁.ty p
+    let t₂ ← e₂.ty p
+    t₁.prod t₂
+  | cond c et ef => do
+    let tc ← c.ty p
+    guard <| tc = .bool
+    let t ← et.ty p
+    let t' ← ef.ty p
+    guard <| t = t'
+    t
+  | proj e i => do
+    let .prod t₁ t₂ ← e.ty p | none
+    if i = 0 then t₁ else t₂
+
+theorem Expr.ty_correct {p : Program} {e : Expr} {t : Ty} :
+    e.ty p = some t ↔ p ⊢ e : t := by
+  constructor <;> intro h
+  · induction e generalizing t with
+    | var n =>
+      simp only [ty, Option.dite_none_right_eq_some, Option.some.injEq] at h
+      obtain ⟨hn, rfl⟩ := h
+      constructor
+    | fn n =>
+      simp only [ty, Option.dite_none_right_eq_some, Option.some.injEq] at h
+      obtain ⟨hn, rfl⟩ := h
+      constructor
+    | const c =>
+      simp only [ty, Option.some.injEq] at h
+      obtain rfl := h
+      constructor
+    | bin k e₁ e₂ ih₁ ih₂ =>
+      cases k with
+      | app =>
+        cases h₁ : e₁.ty p with
+        | none => simp [ty, h₁] at h
+        | some tf =>
+          cases tf <;> try solve | simp [ty, h₁] at h
+          rename_i t₁ t₂
+          cases h₂ : e₂.ty p with
+          | none => simp [ty, h₁, h₂] at h
+          | some t₁' =>
+            have ht₁ := ih₁ h₁
+            have ht₂ := ih₂ h₂
+            by_cases heq : t₁ = t₁'
+            · rw [← heq] at ht₂
+              simp only [ty, h₁, h₂, heq, guard, Option.pure_def, Option.bind_eq_bind,
+                Option.bind_some, ↓reduceIte, Option.some.injEq] at h
+              subst t
+              constructor <;> assumption
+            · simp! [guard, failure, h₁, h₂, heq] at h
+      | pair =>
+        cases h₁ : e₁.ty p with
+        | none => simp! [h₁] at h
+        | some t₁ =>
+          cases h₂ : e₂.ty p with
+          | none => simp! [h₁, h₂] at h
+          | some t₂ =>
+            have ht₁ := ih₁ h₁
+            have ht₂ := ih₂ h₂
+            simp only [ty, h₁, h₂, Option.bind_eq_bind, Option.bind, Option.some.injEq] at h
+            subst t
+            constructor <;> assumption
+    | cond c et ef ihc ihet ihef =>
+      cases hc : c.ty p with
+      | none => simp! [hc] at h
+      | some tc =>
+        cases tc <;> try solve | simp! [guard, failure, hc] at h
+        cases het : et.ty p with
+        | none => simp! [hc, het] at h
+        | some tt =>
+          cases hef : ef.ty p with
+          | none => simp! [hc, het, hef] at h
+          | some tf =>
+            have htc := ihc hc
+            have htet := ihet het
+            have htef := ihef hef
+            by_cases heq : tt = tf
+            · simp [ty, hc, het, heq, hef, guard, Option.pure_def, Option.bind_eq_bind,
+                Option.bind_some, ↓reduceIte, Option.some.injEq] at h
+              subst tt tf
+              constructor <;> assumption
+            · simp! [guard, failure, *] at h
+    | proj e i ih =>
+      cases he : e.ty p with
+      | none => simp! [he] at h
+      | some te =>
+        cases te <;> try solve | simp! [he] at h
+        rename_i t₁ t₂
+        have ht := ih he
+        by_cases hi : i = 0
+        · subst i
+          simp only [ty, he, Fin.isValue, ↓reduceIte, Option.bind_eq_bind, Option.bind_some,
+            Option.some.injEq] at h
+          subst t
+          constructor
+          assumption
+        · obtain rfl : i = 1 := by omega
+          simp only [ty, he, hi, Fin.isValue, ↓reduceIte, Option.bind_eq_bind, Option.bind_some,
+            Option.some.injEq] at h
+          subst t
+          constructor
+          assumption
+  · induction h with simp! [guard, *]
+
+instance {p : Program} {e : Expr} {t : Ty} : Decidable (p ⊢ e : t) :=
+  decidable_of_iff (e.ty p = some t) Expr.ty_correct
+
+instance {p : Program} : Decidable (⊢ p) :=
+  inferInstanceAs (Decidable (∀ n (_ : n < p.size), p ⊢ p.fn[n] : p.ret[n]))
+
+instance {c : Computation} {t : Ty} : Decidable (⊢ c : t) :=
+  decidable_of_iff (⊢ c.toProgram ∧ c.toProgram ⊢ c.expr : t) <| by
+    grind [Computation.Types]
+
+end
+
 def Expr.locals : Expr → Std.HashSet Nat × Std.HashSet Nat
   | var n => ({n}, ∅)
   | fn n => (∅, {n})

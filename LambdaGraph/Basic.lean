@@ -10,6 +10,7 @@ inductive Ty where
   | int                 -- integers
   | fn (t₁ t₂ : Ty)     -- the function type t₁ → t₂
   | prod (t₁ t₂ : Ty)   -- the product type t₁ × t₂
+  deriving DecidableEq
 
 class Denote (α : Type) (β : outParam Type) where
   denote : α → β
