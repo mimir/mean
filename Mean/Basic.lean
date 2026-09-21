@@ -21,6 +21,7 @@ inductive Op where
   | add
   | sub
   | mul
+  deriving DecidableEq
 
 instance : Denote Op (Int → Int → Int) where
   denote
@@ -34,6 +35,7 @@ inductive Cmp where
   | ne
   | le
   | lt
+  deriving DecidableEq
 
 instance : Denote Cmp (Int → Int → Bool) where
   denote
@@ -47,6 +49,7 @@ inductive Logic where
   | and
   | or
   | xor
+  deriving DecidableEq
 
 instance : Denote Logic (Bool → Bool → Bool) where
   denote
@@ -62,6 +65,7 @@ inductive Const where
   | op (f : Op)
   | cmp (f : Cmp)
   | logic (f : Logic)
+  deriving DecidableEq
 
 /-- Returns the type of a constant. -/
 @[expose, grind unfold]
@@ -77,6 +81,7 @@ def Const.ty : Const → Ty
 inductive BinKind where
   | app     -- a function application
   | pair    -- a pair constructor
+  deriving DecidableEq
 
 /--
 An expression.
@@ -96,6 +101,7 @@ inductive Expr where
   | bin (k : BinKind) (e₁ e₂ : Expr)  -- a binary expression
   | cond (c et ef : Expr)             -- a conditional expression
   | proj (e : Expr) (i : Fin 2)       -- pair projection to one component
+  deriving DecidableEq
 
 abbrev Expr.unit : Expr := .const .unit
 
