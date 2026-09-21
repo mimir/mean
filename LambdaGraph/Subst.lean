@@ -2,6 +2,7 @@ module
 
 import all LambdaGraph.SubstMaps
 public import LambdaGraph.Nest
+import LambdaGraph.Algorithms
 
 macro_rules | `(tactic| get_elem_tactic_extensible) => `(tactic| grind)
 
@@ -25,7 +26,7 @@ structure SubstResult (p : Program) (e : Expr) (vm : VarMap p.size) (fm : FunMap
   funMap : FunMap program.size
   props : SubstProps p program e expr vm fm funMap
 
-open Classical Termination in
+open Termination in
 /--
 Makes substitutions in an expression according to the given maps.
 
@@ -39,7 +40,7 @@ This definition is `noncomputable` as we have not defined a decision procedure
 to decide if an expression contains a free substitution variable (but there is
 no reason such a procedure could not be implemented).
 -/
-noncomputable def Expr.subst (p : Program) (e : Expr) (vm : VarMap p.size)
+def Expr.subst (e : Expr) (p : Program) (vm : VarMap p.size)
     (fm : FunMap p.size) : SubstResult p e vm fm :=
   if hf : ∀ n, e.Free p n → ¬vm.Dom n then
     -- The expression does not contain a free substitution variable, so there is
@@ -105,7 +106,7 @@ decreasing_by
   all_goals grind
 
 /-- Substitutes a value for a variable in a computation. -/
-public noncomputable def Computation.subst (p : Computation) (n : Nat) (v : Expr) :
+public def Computation.subst (p : Computation) (n : Nat) (v : Expr) :
     Computation :=
   let ⟨p', e', _, _⟩ := p.expr.subst p.toProgram (.mk _ n v) (.mk _)
   ⟨p', e'⟩
@@ -1166,7 +1167,7 @@ theorem Expr.provenance_subst {p : Program} {e : Expr}
     let ⟨p', e', fm', _⟩ := e.subst p vm fm
     e.Provenance e' p' vm.extend fm' := by
   fun_induction subst
-  next p e vm fm h =>
+  next e p vm fm h =>
     intro n r hl
     have hndep : ¬vm.Dep p n := by
       intro hdep

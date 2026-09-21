@@ -7,4 +7,5 @@ public import LambdaGraph.Basic
 public import LambdaGraph.Nest
 public import LambdaGraph.Subst
 public import LambdaGraph.Step
+public import LambdaGraph.Algorithms
 public import LambdaGraph.Syntax

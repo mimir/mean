@@ -2,6 +2,8 @@ module
 
 public import LambdaGraph.Basic
 
+import LambdaGraph.Finset
+
 public section
 
 /--
@@ -28,6 +30,9 @@ def VarMap.extend {n n' : Nat} (v : VarMap n) : VarMap n' :=
 /-- A predicate representing the domain of a variable map. -/
 def VarMap.Dom {n : Nat} (vm : VarMap n) (m : Nat) : Prop :=
   ∃ hm, vm[m]'hm ≠ .var m
+
+instance {n : Nat} {vm : VarMap n} {m : Nat} : Decidable (vm.Dom m) :=
+  inferInstanceAs (Decidable (∃ hm, vm[m]'hm ≠ .var m))
 
 /--
 The typing predicate for variable maps.
@@ -175,6 +180,9 @@ def FunMap.update {n : Nat} (fm : FunMap n) (m : Nat)
 /-- A predicate representing the domain of a function map. -/
 def FunMap.Dom {n : Nat} (fm : FunMap n) (m : Nat) : Prop :=
   ∃ hm, fm[m]'hm ≠ m
+
+instance {n : Nat} {fm : FunMap n} {m : Nat} : Decidable (fm.Dom m) :=
+  inferInstanceAs (Decidable (∃ hm, fm[m]'hm ≠ m))
 
 /--
 The typing predicate for function maps.
@@ -498,155 +506,6 @@ theorem Expr.exists_of_new_reachable {p p' : Program} {e : Expr} {n : Nat}
       · exact Or.inr ⟨i, hi, h⟩
     · exact ⟨m, by simpa using hm, hm', Or.inl hl⟩
 
-structure Finset : Type where
-  mem : Nat → Prop
-  bound : Nat
-  not_mem_of_ge_bound : ∀ m ≥ bound, ¬mem m
-
-instance : Membership Nat Finset := ⟨Finset.mem⟩
-
-instance : HasSubset Finset where
-  Subset s₁ s₂ := ∀ n ∈ s₁, n ∈ s₂
-
-instance : HasSSubset Finset where
-  SSubset s₁ s₂ := s₁ ⊆ s₂ ∧ ¬s₂ ⊆ s₁
-
-instance : EmptyCollection Finset := ⟨fun _ => False, 0, by simp⟩
-
-instance : Singleton Nat Finset where
-  singleton n := ⟨fun m => m = n, n + 1, by lia⟩
-
-def Finset.insert (s : Finset) (n : Nat) : Finset where
-  mem := fun m => m = n ∨ s.mem m
-  bound := (n + 1).max s.bound
-  not_mem_of_ge_bound := by grind [not_mem_of_ge_bound]
-
-instance : Insert Nat Finset where
-  insert n s := s.insert n
-
-protected def Finset.union (s₁ s₂ : Finset) : Finset where
-  mem := fun n => s₁.mem n ∨ s₂.mem n
-  bound := s₁.bound.max s₂.bound
-  not_mem_of_ge_bound := by grind [not_mem_of_ge_bound]
-
-instance : Union Finset := ⟨Finset.union⟩
-
-def Finset.filter (s : Finset) (p : Nat → Prop) : Finset where
-  mem := fun n => s.mem n ∧ p n
-  bound := s.bound
-  not_mem_of_ge_bound := by grind [not_mem_of_ge_bound]
-
-open Classical in
-noncomputable def Finset.size (s : Finset) : Nat := aux s.bound (Nat.le_refl _)
-  where
-    aux (i : Nat) (h : i ≤ s.bound) : Nat :=
-      match i with
-      | 0 => 0
-      | i + 1 => aux i (by lia) + if i ∈ s then 1 else 0
-
-def Finset.withBound (s : Finset) (b : Nat) (h : ∀ n ≥ b, n ∉ s) : Finset where
-  mem := s.mem
-  bound := b
-  not_mem_of_ge_bound := by simpa [Membership.mem] using h
-
-@[grind →]
-theorem Finset.notMem_of_ge_bound {s : Finset} {n : Nat} (h : s.bound ≤ n) :
-    n ∉ s := s.not_mem_of_ge_bound n h
-
-@[grind →]
-theorem Finset.mem_of_subset {s₁ s₂ : Finset} {n : Nat} (h : s₁ ⊆ s₂)
-    (hn : n ∈ s₁) : n ∈ s₂ := h _ hn
-
-@[simp, grind .]
-theorem Finset.notMem_emptyCollection {n : Nat} : n ∉ (∅ : Finset) := by
-  simp [Membership.mem, EmptyCollection.emptyCollection]
-
-@[simp, grind =]
-theorem Finset.singleton_eq_insert {n : Nat} : {n} = Insert.insert n (∅ : Finset) := by
-  simp [EmptyCollection.emptyCollection, Singleton.singleton, Insert.insert, Finset.insert]
-
-@[simp, grind =]
-theorem Finset.mem_insert_iff {s : Finset} {m n : Nat} :
-    n ∈ Insert.insert m s ↔ n = m ∨ n ∈ s := by
-  simp [Membership.mem, Insert.insert, Finset.insert]
-
-@[simp, grind =]
-theorem Finset.mem_union_iff {s₁ s₂ : Finset} {n : Nat} :
-    n ∈ s₁ ∪ s₂ ↔ n ∈ s₁ ∨ n ∈ s₂ := by
-  simp [Membership.mem, Union.union, Finset.union]
-
-@[simp, grind =]
-theorem Finset.mem_filter_iff {s : Finset} {p : Nat → Prop} {n : Nat} :
-    n ∈ s.filter p ↔ n ∈ s ∧ p n := by
-  simp [Membership.mem, Finset.filter]
-
-@[simp, grind =]
-theorem Finset.mem_withBound_iff {s : Finset} {b n : Nat} (h : ∀ m ≥ b, m ∉ s) :
-    n ∈ s.withBound b h ↔ n ∈ s := by
-  simp [Membership.mem, withBound]
-
-@[grind →]
-theorem Finset.ssubset_of_subset {s₁ s₂ : Finset} {n : Nat} (h : s₁ ⊆ s₂)
-    (h₁ : n ∉ s₁) (h₂ : n ∈ s₂) : s₁ ⊂ s₂ := ⟨h, fun h => h₁ (h _ h₂)⟩
-
-theorem Finset.size_withBound {s : Finset} {b : Nat} (h : ∀ n ≥ b, n ∉ s) :
-    (s.withBound b h).size = s.size := by
-  have h₁ : ∀ i (hi : i ≤ s.bound.min b),
-      size.aux (s.withBound b h) i (by grind [withBound]) = size.aux s i (by grind) := by
-    intro i hi
-    fun_induction size.aux s i (by grind) with grind [size.aux]
-  have h₂ : ∀ i hile (higt : s.bound.min b < i),
-      size.aux s i hile = size.aux s (s.bound.min b) (by lia) := by
-    intro i hile higt
-    fun_induction size.aux s i hile with grind
-  have h₃ : ∀ i hile (hige : s.bound.min b < i),
-      size.aux (s.withBound b h) i hile = size.aux (s.withBound b h) (s.bound.min b) (by lia) := by
-    intro i hile higt
-    fun_induction size.aux _ i hile with grind
-  grind [size]
-
-theorem Finset.size_insert {s : Finset} {n : Nat} (h : n ∉ s) :
-    (Insert.insert n s).size = s.size + 1 := by
-  let b := (n + 1).max s.bound
-  have hb : ∀ m ≥ b, m ∉ s := by grind [notMem_of_ge_bound]
-  rw [← size_withBound hb]
-  suffices ∀ i hi,
-      size.aux (Insert.insert n s) i hi =
-        size.aux (s.withBound b hb) i hi + if n < i then 1 else 0 by
-    have := this b (Nat.le_refl _)
-    simpa [show n < b by grind]
-  intro i hi
-  fun_induction size.aux (Insert.insert n s) i hi with grind [size.aux]
-
-@[grind →]
-theorem Finset.size_le_size {s₁ s₂ : Finset} (h : s₁ ⊆ s₂) :
-    s₁.size ≤ s₂.size := by
-  have hb : ∀ n ≥ s₂.bound, n ∉ s₁ := by grind [notMem_of_ge_bound]
-  rw [← size_withBound hb]
-  suffices ∀ i (hi : i ≤ s₂.bound),
-      size.aux (s₁.withBound s₂.bound hb) i hi ≤ size.aux s₂ i hi from
-    this _ _
-  intro i hi
-  fun_induction size.aux s₂ i hi with grind [size.aux]
-
-@[grind →]
-theorem Finset.size_lt_size {s₁ s₂ : Finset} (h : s₁ ⊂ s₂) :
-    s₁.size < s₂.size := by
-  obtain ⟨hsub, hex⟩ := h
-  simp only [Subset, Classical.not_forall] at hex
-  obtain ⟨n, h₂, h₁⟩ := hex
-  calc s₁.size
-    _ < (Insert.insert n s₁).size := by
-      rw [size_insert h₁]
-      exact Nat.lt_succ_self _
-    _ ≤ s₂.size := by
-      apply size_le_size
-      intro m h
-      simp only [mem_insert_iff] at h
-      obtain rfl | h := h
-      · exact h₂
-      · exact hsub _ h
-
 def Expr.localFns : Expr → Finset
   | var _ | const _ => ∅
   | fn m => {m}
@@ -676,7 +535,7 @@ def FunMap.range {n : Nat} (fm : FunMap n) : Finset :=
     aux (i : Nat) (hn : i ≤ n) :=
       match i with
       | 0 => ∅
-      | i + 1 => insert fm[i] (aux i (by lia))
+      | i + 1 => (aux i (by lia)).insert fm[i]
 
 theorem Expr.localFns_correct {e : Expr} {m : Nat} :
     m ∈ e.localFns ↔ e.LocalFn m := by
@@ -717,7 +576,7 @@ noncomputable def reachableUnmapped (p : Program) (e : Expr)
       | 0 => ∅
       | i + 1 =>
         let rest := aux i (by lia)
-        if e.Reachable p i ∧ fm[i] = i then insert i rest else rest
+        if e.Reachable p i ∧ fm[i] = i then rest.insert i else rest
 
 @[grind =]
 theorem reachableUnmapped_correct {p : Program} {e : Expr} {fm : FunMap p.size}
