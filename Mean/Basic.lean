@@ -10,7 +10,7 @@ inductive Ty where
   | int                 -- integers
   | fn (t₁ t₂ : Ty)     -- the function type t₁ → t₂
   | prod (t₁ t₂ : Ty)   -- the product type t₁ × t₂
-  deriving DecidableEq
+  deriving @[expose] DecidableEq
 
 class Denote (α : Type) (β : outParam Type) where
   denote : α → β
@@ -22,7 +22,7 @@ inductive Op where
   | add
   | sub
   | mul
-  deriving DecidableEq
+  deriving @[expose] DecidableEq
 
 instance : Denote Op (Int → Int → Int) where
   denote
@@ -36,7 +36,7 @@ inductive Cmp where
   | ne
   | le
   | lt
-  deriving DecidableEq
+  deriving @[expose] DecidableEq
 
 instance : Denote Cmp (Int → Int → Bool) where
   denote
@@ -50,7 +50,7 @@ inductive Logic where
   | and
   | or
   | xor
-  deriving DecidableEq
+  deriving @[expose] DecidableEq
 
 instance : Denote Logic (Bool → Bool → Bool) where
   denote
@@ -66,7 +66,7 @@ inductive Const where
   | op (f : Op)
   | cmp (f : Cmp)
   | logic (f : Logic)
-  deriving DecidableEq
+  deriving @[expose] DecidableEq
 
 /-- Returns the type of a constant. -/
 @[expose, grind unfold]
@@ -82,7 +82,7 @@ def Const.ty : Const → Ty
 inductive BinKind where
   | app     -- a function application
   | pair    -- a pair constructor
-  deriving DecidableEq
+  deriving @[expose] DecidableEq
 
 /--
 An expression.
@@ -102,7 +102,7 @@ inductive Expr where
   | bin (k : BinKind) (e₁ e₂ : Expr)  -- a binary expression
   | cond (c et ef : Expr)             -- a conditional expression
   | proj (e : Expr) (i : Fin 2)       -- pair projection to one component
-  deriving DecidableEq
+  deriving @[expose] DecidableEq
 
 abbrev Expr.unit : Expr := .const .unit
 
@@ -160,6 +160,7 @@ structure Program where
   ty : Vector Ty size
   /-- Maps each label to the corresponding function's return type. -/
   ret : Vector Ty size
+  deriving @[expose] DecidableEq
 
 /-- Extends a program by a new function with a given body and argument type. -/
 abbrev Program.push (p : Program) (b : Expr) (t₁ t₂ : Ty) : Program :=
@@ -175,6 +176,7 @@ Constructs a program from a list of functions.
 
 Each function is represented as a tuple of argument type, return type, and body.
 -/
+@[expose]
 def Program.ofList (l : List (Ty × Ty × Expr)) : Program :=
   aux ⟨0, ⟨#[], rfl⟩, ⟨#[], rfl⟩, ⟨#[], rfl⟩⟩ l
   where
@@ -205,6 +207,7 @@ grind_pattern Program.Prefix.ret_eq => p.Prefix p', m < p.size, p'.ret[m]
 structure Computation extends Program where
   /-- The expression to be evaluated. -/
   expr : Expr
+  deriving @[expose] DecidableEq
 
 /-- A fully reduced expression. -/
 inductive Expr.Value : Expr → Prop where

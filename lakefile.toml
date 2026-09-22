@@ -1,6 +1,9 @@
 name = "mean"
 version = "0.1.0"
-defaultTargets = ["Mean"]
+defaultTargets = ["Mean", "Examples"]
 
 [[lean_lib]]
 name = "Mean"
+
+[[lean_lib]]
+name = "Examples"
