@@ -1,6 +1,9 @@
 name = "lambda-graph"
 version = "0.1.0"
-defaultTargets = ["LambdaGraph"]
+defaultTargets = ["LambdaGraph", "Examples"]
 
 [[lean_lib]]
 name = "LambdaGraph"
+
+[[lean_lib]]
+name = "Examples"

@@ -8,6 +8,7 @@ public import LambdaGraph.Nest
 
 public section
 
+@[expose]
 def Expr.ty (p : Program) : Expr → Option Ty
   | var n => if _ : n < p.size then p.ty[n] else none
   | fn n => if _ : n < p.size then p.ty[n].fn p.ret[n] else none

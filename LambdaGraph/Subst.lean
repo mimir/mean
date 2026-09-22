@@ -1,6 +1,7 @@
 module
 
 import all LambdaGraph.SubstMaps
+public import LambdaGraph.SubstMaps
 public import LambdaGraph.Nest
 import LambdaGraph.Algorithms
 
@@ -20,11 +21,12 @@ The result of a substitution.
 This contains the updated program and expression, the new function map, as well
 as some evidence used in the termination proof.
 -/
-structure SubstResult (p : Program) (e : Expr) (vm : VarMap p.size) (fm : FunMap p.size) : Type where
+public structure SubstResult (p : Program) (e : Expr) (vm : VarMap p.size)
+    (fm : FunMap p.size) : Type where
   program : Program
   expr : Expr
   funMap : FunMap program.size
-  props : SubstProps p program e expr vm fm funMap
+  private props : SubstProps p program e expr vm fm funMap
 
 open Termination in
 /--
@@ -40,7 +42,7 @@ This definition is `noncomputable` as we have not defined a decision procedure
 to decide if an expression contains a free substitution variable (but there is
 no reason such a procedure could not be implemented).
 -/
-def Expr.subst (e : Expr) (p : Program) (vm : VarMap p.size)
+public def Expr.subst (e : Expr) (p : Program) (vm : VarMap p.size)
     (fm : FunMap p.size) : SubstResult p e vm fm :=
   if hf : ∀ n, e.Free p n → ¬vm.Dom n then
     -- The expression does not contain a free substitution variable, so there is
