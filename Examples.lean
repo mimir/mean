@@ -21,6 +21,9 @@ example : factorial ⊢ expr([0] (5, [4])) : ty(⊥) := by decide
 example : expr([0] (5, [4])).Closed factorial := by native_decide
 example : expr([1] (var[0].0, 1)).Free factorial 0 := by native_decide
 
+example : 0 ≻[factorial] 1 := by native_decide
+example : factorial.WF := by native_decide
+
 def factorial' : Program := prog
   λ [int, int → ⊥] → ⊥. [1] (var[0].0, 1)
   λ [int, int] → ⊥. if var[1].0 ≤ 1 then [3] () else [2] ()

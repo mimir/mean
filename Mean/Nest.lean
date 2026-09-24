@@ -223,6 +223,12 @@ theorem Program.lt_size_left_of_nestsEq {p : Program} {m n : Nat} :
   | .refl h => h
   | .nests _ h => lt_size_left_of_nests h
 
+@[grind →]
+theorem Program.lt_size_right_of_nestsEq {p : Program} {m n : Nat} :
+    m ≽[p] n → n < p.size
+  | .refl h => h
+  | .nests _ h => lt_size_right_of_nests h
+
 theorem Program.nests_iff {p : Program} {m n : Nat} : m ≻[p] n ↔
     ∃ (_ : n < p.size) (k : Nat), k < p.size ∧ k ≠ n ∧ p.fn[n].Free p k ∧ m ≽[p] k := by
   constructor
@@ -235,9 +241,27 @@ theorem Program.nests_iff {p : Program} {m n : Nat} : m ≻[p] n ↔
       | refl => exact ⟨hk, m, hl, hne, hf, .nests _ h₁⟩
       | nests _ h => exact ⟨hk, l, hl, hne, hf, .nests _ (.trans _ _ _ h₁ h)⟩
   · rintro ⟨hn, k, hk, hne, hf, h⟩
+    have h' := Nests.free _ _ hk hn hne hf
     cases h with
-    | refl => exact .free _ _ hk hn hne hf
-    | nests _ h => exact .trans _ _ _ h (.free _ _ hk hn hne hf)
+    | refl => exact h'
+    | nests _ h => exact .trans _ _ _ h h'
+
+theorem Program.nests_iff' {p : Program} {m n : Nat} : m ≻[p] n ↔
+    ∃ (k : Nat) (_ : k < p.size), m < p.size ∧ m ≠ k ∧ p.fn[k].Free p m ∧ k ≽[p] n := by
+  constructor
+  · intro h
+    induction h with
+    | free k n hk hn hne hf => exact ⟨n, hn, hk, hne, hf, .refl hn⟩
+    | trans n m k h₁ h₂ ih₁ ih₂ =>
+      obtain ⟨l, hl, hn, hne, hf, h⟩ := ih₁
+      cases h with
+      | refl => exact ⟨m, hl, hn, hne, hf, .nests _ h₂⟩
+      | nests _ h => exact ⟨l, hl, hn, hne, hf, .nests _ (.trans _ _ _ h h₂)⟩
+  · rintro ⟨k, hk, hm, hne, hf, h⟩
+    have h' := Nests.free _ _ hm hk hne hf
+    cases h with
+    | refl => exact .free _ _ hm hk hne hf
+    | nests _ h => exact .trans _ _ _ h' h
 
 /--
 Proves that our definition of well-formedness in terms of the strict nesting
