@@ -62,6 +62,19 @@ This section maps the paper's definitions and results to their location in the c
   Progress (Theorem 2) is called `Computation.progress`, preservation (Theorem 3) is called `Computation.preservation`.
   A combined soundness theorem (`Computation.soundness`) is also included.
 
+- Verified algorithms and `Decidable` instances are contained in [`Mean/Algorithms.lean`](Mean/Algorithms.lean).
+  This covers type checking, free variable computation, the nesting relation, and well-formedness checking.
+
+- The file [`Mean/SubstMaps.lean`](Mean/SubstMaps.lean) contains definitions and theorems needed for substitution.
+  This includes the definitions of variable and function maps (`VarMap` and `FunMap`) with some basic theorems, as well as the ingredients required for the termination proof of substitution.
+
+- A simple implementation of finite sets is contained in [`Mean/Finset.lean`](Mean/Finset.lean).
+  Finite sets are used in some proofs, primarily for the termination argument for substitution.
+
+- The file [`Mean/Syntax.lean`](Mean/Syntax.lean) defines syntax extensions to conveniently represent $\lambda_G$ expressions, types, and programs in Lean.
+
+- Finally, [`Examples.lean`](Examples.lean) contains some simple examples showcasing the Lean syntax for $\lambda_G$ and the verified decision procedures.
+
 ## Differences to the paper
 
 There are some differences between the paper and the formalisation, some of which are explained here.
@@ -77,11 +90,3 @@ Also note the documentation comments on relevant definitions, which provide more
     ```
 
 - Instead of the branch function `br`, we define conditional expressions.
-- Some theorems have fewer assumptions than their statements in the original submission for the paper, as the stronger assumptions turned out to be unnecessary.
-  These superfluous assumptions have also been dropped in later revisions of the paper.
-  In particular:
-  - The reachability assumption has been removed from Theorem 1.
-  - The typing assumption for the program has been removed from Theorem 2.
-    It is sufficient for the expression to be well-typed.
-  - The well-formedness condition for expressions WF-E has been removed.
-    Lemma 3 and Theorems 2 and 3 no longer make use of this construct.
