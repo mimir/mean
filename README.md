@@ -4,7 +4,8 @@ This repository contains the Lean formalisation of $\lambda_G$, the graph-based
 $\lambda$-calculus defined in the paper “SSA without Dominance for Higher-Order
 Programs”. It contains proofs of the lemmas and theorems in the paper, in
 particular the relationship between nesting and dominance and basic soundness
-results.
+results. This formalisation was produced for Johannes Griebler's master's
+thesis; the version submitted as part of that thesis is tagged `thesis`.
 
 ## Checking the proofs
 
@@ -49,10 +50,34 @@ in the repository.
   called `Computation.preservation`. A combined soundness theorem
   (`Computation.soundness`) is also included.
 
-- [`LambdaGraph/Basic.lean`]: LambdaGraph/Basic.lean
-- [`LambdaGraph/Nest.lean`]: LambdaGraph/Nest.lean
-- [`LambdaGraph/Subst.lean`]: LambdaGraph/Subst.lean
-- [`LambdaGraph/Step.lean`]: LambdaGraph/Step.lean
+- Verified algorithms and `Decidable` instances are contained in
+  [`LambdaGraph/Algorithms.lean`]. This covers type checking, free variable
+  computation, the nesting relation, and well-formedness checking.
+
+- The file [`LambdaGraph/SubstMaps.lean`] contains definitions and theorems
+  needed for substitution. This includes the definitions of variable and
+  function maps (`VarMap` and `FunMap`) with some basic theorems, as well as the
+  ingredients required for the termination proof of substitution.
+
+- A simple implementation of finite sets is contained in
+  [`LambdaGraph/Finset.lean`]. Finite sets are used in some proofs, primarily
+  for the termination argument for substitution.
+
+- The file [`LambdaGraph/Syntax.lean`] defines syntax extensions to conveniently
+  represent $\lambda_G$ expressions, types, and programs in Lean.
+
+- Finally, [`Examples.lean`] contains some simple examples showcasing the Lean
+  syntax for $\lambda_G$ and the verified decision procedures.
+
+[`LambdaGraph/Basic.lean`]: LambdaGraph/Basic.lean
+[`LambdaGraph/Nest.lean`]: LambdaGraph/Nest.lean
+[`LambdaGraph/Subst.lean`]: LambdaGraph/Subst.lean
+[`LambdaGraph/Step.lean`]: LambdaGraph/Step.lean
+[`LambdaGraph/Algorithms.lean`]: LambdaGraph/Algorithms.lean
+[`LambdaGraph/SubstMaps.lean`]: LambdaGraph/SubstMaps.lean
+[`LambdaGraph/Finset.lean`]: LambdaGraph/Finset.lean
+[`LambdaGraph/Syntax.lean`]: LambdaGraph/Syntax.lean
+[`Examples.lean`]: Examples.lean
 
 ## Differences to the paper
 
@@ -74,12 +99,3 @@ definitions, which provide more explanations.
     ```
 
 - Instead of the branch function `br`, we define conditional expressions.
-- Some theorems have fewer assumptions than their statements in the original
-  submission for the paper, as the stronger assumptions turned out to be
-  unnecessary. These superfluous assumptions have also been dropped in later
-  revisions of the paper. In particular:
-  - The reachability assumption has been removed from Theorem 1.
-  - The typing assumption for the program has been removed from Theorem 2.
-    It is sufficient for the expression to be well-typed.
-  - The well-formedness condition for expressions WF-E has been removed.
-    Lemma 3 and Theorems 2 and 3 no longer make use of this construct.
