@@ -123,7 +123,7 @@ theorem Computation.progress {c : Computation} {t : Ty}
     obtain ⟨hcc, hcet, hcef⟩ := Expr.cond_closed_iff.mp hc
     obtain hvc | ⟨c', hs⟩ := ihc hcc
     · obtain ⟨_ | _, rfl⟩ := Expr.value_types_bool htc hvc <;>
-        repeat constructor
+        repeat constructor!
     · exact ⟨_, Step.condC _ _ _ _ _ _ hs⟩
   | proj0 e t₁ t₂ ht ih =>
     right

@@ -239,7 +239,7 @@ theorem Path.mem_step_iff {r : Rel} {l m n k : Nat} {path : Path r n k}
     cases h with
     | head _ _ => exact .inl rfl
     | tail _ _ _ _ _ h => exact .inr h
-  · rintro (rfl | h) <;> constructor <;> assumption
+  · rintro (rfl | h) <;> constructor! <;> assumption
 
 def Path.Bounded {r : Rel} {m k : Nat} (path : Path r m k) (n : Nat) : Prop :=
   ∀ ⦃l⦄, l ∈ path → l < n
@@ -256,7 +256,7 @@ theorem Path.labels_correct {r : Rel} {l m n : Nat} {path : Path r m n} :
     next k m n hs path ih =>
       simp only [Finset.mem_insert_iff] at h
       obtain rfl | h := h
-      · constructor
+      · constructor!
       · apply_rules [Mem.tail]
   · induction h with grind [labels, cases Path]
 
